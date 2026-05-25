@@ -13,6 +13,10 @@ overwritten on the next push.
 
 ## [Unreleased]
 
+### Features
+
+- **doctor:** verify codex+claude auth state, not just binary presence (98bd40e)
+
 ### Bug Fixes
 
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
