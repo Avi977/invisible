@@ -16,7 +16,13 @@ from pathlib import Path
 from typing import Any
 
 CONFIG = {
-    "codex_cmd": ["codex", "exec", "--skip-git-repo-check"],
+    # `--sandbox workspace-write` lets codex modify files inside the worktree.
+    # Without it codex runs read-only and silently produces zero changes
+    # (default in codex 0.130+ for safety). The orchestrator's whole point is
+    # to make changes, so we opt in here. Override per-call by passing a
+    # different CONFIG["codex_cmd"] before run_codex().
+    "codex_cmd": ["codex", "exec", "--skip-git-repo-check",
+                  "--sandbox", "workspace-write"],
     "claude_cmd": ["claude", "-p", "--output-format", "json"],
     "codex_timeout_s": 900,
     "claude_timeout_s": 600,
