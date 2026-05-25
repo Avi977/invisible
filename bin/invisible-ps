@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""invisible-ps — list every project that has a checkpoint, with run state.
+
+Output columns:
+    project           — folder name under $INVISIBLE_HOME/worktrees/
+    state             — RUN (orchestrator live), idle, or stale (pidfile/dead)
+    iter              — last iteration / cap
+    verdict           — last claude verdict
+    age               — wall-clock since the checkpoint was updated
+    cost              — cumulative claude cost in USD
+    sha               — last codex commit
+
+`ps` style; meant to be run from any pane, any host.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def home() -> Path:
+    return Path(os.path.expanduser(os.environ.get("INVISIBLE_HOME", "~/.invisible")))
+
+
+def humanize_age(iso: str) -> str:
+    try:
+        when = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return "?"
+    delta = dt.datetime.now(dt.timezone.utc) - when
+    s = int(delta.total_seconds())
+    if s < 60:    return f"{s}s"
+    if s < 3600:  return f"{s//60}m"
+    if s < 86400: return f"{s//3600}h"
+    return f"{s//86400}d"
+
+
+def pid_state(project: str) -> str:
+    """RUN if pidfile exists and pid is alive, stale if pidfile is dead, idle otherwise."""
+    pf = home() / "run" / f"{project}.pid"
+    if not pf.exists():
+        return "idle"
+    try:
+        pid = int(pf.read_text().strip())
+    except (OSError, ValueError):
+        return "stale"
+    try:
+        os.kill(pid, 0)
+        return "RUN"
+    except (OSError, ProcessLookupError):
+        return "stale"
+
+
+def collect_rows() -> list[dict]:
+    root = home() / "worktrees"
+    if not root.exists():
+        return []
+    rows: list[dict] = []
+    for cp in root.glob("*/feature/.invisible-checkpoint.json"):
+        try:
+            state = json.loads(cp.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        project = state.get("project") or cp.parent.parent.name
+        cost = (state.get("usage_total") or {}).get("cost_usd", 0.0)
+        rows.append({
+            "project": project,
+            "state":   pid_state(project),
+            "iter":    f"{state.get('iteration', 0)}/{state.get('max_iters','∞')}",
+            "verdict": state.get("last_verdict") or "—",
+            "age":     humanize_age(state.get("updated_at", "")),
+            "cost":    f"${cost:.4f}",
+            "sha":     state.get("last_sha") or "—",
+        })
+    # Active runs first, then most-recently-updated
+    rows.sort(key=lambda r: (0 if r["state"] == "RUN" else 1, r["age"]))
+    return rows
+
+
+def main() -> int:
+    rows = collect_rows()
+    if not rows:
+        print("(no checkpoints)")
+        return 0
+
+    cols = ["project", "state", "iter", "verdict", "age", "cost", "sha"]
+    widths = {c: max(len(c), max(len(r[c]) for r in rows)) for c in cols}
+    header = "  ".join(c.upper().ljust(widths[c]) for c in cols)
+    print(header)
+    print("  ".join("-" * widths[c] for c in cols))
+    for r in rows:
+        line = "  ".join(r[c].ljust(widths[c]) for c in cols)
+        # Color: green for RUN, yellow for stale, default otherwise.
+        if sys.stdout.isatty():
+            if r["state"] == "RUN":
+                line = f"\033[32m{line}\033[0m"
+            elif r["state"] == "stale":
+                line = f"\033[33m{line}\033[0m"
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

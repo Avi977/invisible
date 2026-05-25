@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""invisible-ship — turn an approved orchestrator run into a real shipment.
+
+Two modes:
+  --pr      push the feature branch + open a GitHub PR via `gh` (default)
+  --merge   merge feature branch directly into the repo's main branch
+            locally (squash by default, --no-squash for a merge commit)
+
+In both modes:
+  - refuses to ship unless the latest checkpoint says verdict=approve
+    (override with --force)
+  - updates the Notion Projects row to Status=Shipped if it can find one
+  - sends a Telegram alert with the outcome
+  - leaves the worktrees in place — `git worktree remove` them yourself
+    once you're sure (invisible-new doesn't auto-GC)
+
+Usage:
+    invisible-ship <project>                       # --pr (default)
+    invisible-ship <project> --pr --base develop   # PR against develop
+    invisible-ship <project> --merge               # squash-merge to main
+    invisible-ship <project> --merge --no-squash   # merge commit instead
+    invisible-ship <project> --force               # skip approval gate
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import checkpoint  # noqa: E402
+import notion  # noqa: E402
+import telegram  # noqa: E402
+from config import home, load_env, load_toml  # noqa: E402
+
+
+def detect_main_branch(repo: Path) -> str:
+    """Best-effort: read the remote HEAD, fall back to 'main' then 'master'."""
+    r = subprocess.run(
+        ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        cwd=str(repo), capture_output=True, text=True, check=False,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        # 'origin/main' → 'main'
+        return r.stdout.strip().split("/", 1)[-1]
+    for candidate in ("main", "master"):
+        r = subprocess.run(["git", "rev-parse", "--verify", candidate],
+                           cwd=str(repo), capture_output=True, text=True,
+                           check=False)
+        if r.returncode == 0:
+            return candidate
+    return "main"
+
+
+def current_branch(worktree: Path) -> str:
+    r = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(worktree), capture_output=True, text=True, check=False,
+    )
+    return r.stdout.strip()
+
+
+def find_project(cfg: dict, name: str) -> dict | None:
+    for p in cfg.get("projects", []):
+        if p.get("name") == name:
+            return p
+    return None
+
+
+def open_pr(feature: Path, branch: str, base: str, state: dict,
+            project_name: str) -> int:
+    if not shutil.which("gh"):
+        print("[ship] gh CLI not on PATH — install it or use --merge",
+              file=sys.stderr)
+        return 2
+    print(f"[ship] pushing {branch} → origin")
+    push = subprocess.run(["git", "push", "-u", "origin", branch],
+                          cwd=str(feature), check=False)
+    if push.returncode != 0:
+        return push.returncode
+
+    title = f"{project_name}: {state.get('task','').splitlines()[0][:80]}"
+    body = (
+        f"Auto-shipped by invisible.\n\n"
+        f"- Iterations: {state.get('iteration', '?')}\n"
+        f"- Last verdict: {state.get('last_verdict','?')}\n"
+        f"- Summary: {state.get('last_summary','')}\n\n"
+        f"Review history: see Notion Reviews DB."
+    )
+    cmd = ["gh", "pr", "create", "--base", base, "--head", branch,
+           "--title", title, "--body", body]
+    r = subprocess.run(cmd, cwd=str(feature), capture_output=True,
+                       text=True, check=False)
+    if r.returncode != 0:
+        # Most likely a PR already exists. Try `gh pr view --json url`.
+        view = subprocess.run(
+            ["gh", "pr", "view", branch, "--json", "url", "-q", ".url"],
+            cwd=str(feature), capture_output=True, text=True, check=False,
+        )
+        if view.returncode == 0 and view.stdout.strip():
+            print(f"[ship] PR already exists: {view.stdout.strip()}")
+            return 0
+        print(r.stderr.strip(), file=sys.stderr)
+        return r.returncode
+    print(r.stdout.strip())
+    return 0
+
+
+def merge_local(feature: Path, repo: Path, branch: str, base: str,
+                squash: bool) -> int:
+    """Merge the feature branch into base in the main repo. Uses the main
+    repo's checkout (not the feature worktree) so the worktree stays put."""
+    # Make sure the feature branch reachable in the main repo
+    subprocess.run(["git", "fetch", "--all", "--prune"], cwd=str(repo), check=False)
+    print(f"[ship] checking out {base} in {repo}")
+    r = subprocess.run(["git", "checkout", base], cwd=str(repo), check=False)
+    if r.returncode != 0:
+        return r.returncode
+    subprocess.run(["git", "pull", "--ff-only"], cwd=str(repo), check=False)
+    if squash:
+        print(f"[ship] squash-merging {branch} into {base}")
+        m = subprocess.run(["git", "merge", "--squash", branch],
+                           cwd=str(repo), check=False)
+        if m.returncode != 0:
+            return m.returncode
+        c = subprocess.run(["git", "commit", "-m", f"{branch}: squash-merge"],
+                           cwd=str(repo), check=False)
+        return c.returncode
+    print(f"[ship] merging {branch} into {base} (merge commit)")
+    r = subprocess.run(["git", "merge", "--no-ff", branch,
+                        "-m", f"Merge {branch}"], cwd=str(repo), check=False)
+    return r.returncode
+
+
+def mark_shipped(project_id: str | None) -> bool:
+    if not project_id:
+        return False
+    res = notion._request("PATCH", f"/pages/{project_id}", {
+        "properties": {"Status": notion._select("Shipped")},
+    })
+    return res is not None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-ship")
+    ap.add_argument("project")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--pr", action="store_true", default=True,
+                      help="open a GitHub PR (default)")
+    mode.add_argument("--merge", action="store_true",
+                      help="merge locally into main")
+    ap.add_argument("--base", default="",
+                    help="base branch (default: repo's main/master)")
+    ap.add_argument("--no-squash", action="store_true",
+                    help="for --merge: use a merge commit instead of squash")
+    ap.add_argument("--force", action="store_true",
+                    help="ship even if checkpoint isn't approved")
+    args = ap.parse_args()
+
+    load_env()
+    cfg = load_toml()
+    proj = find_project(cfg, args.project)
+    if not proj:
+        print(f"[ship] project '{args.project}' not in invisible.toml",
+              file=sys.stderr)
+        return 1
+
+    feature = home() / "worktrees" / args.project / "feature"
+    if not feature.exists():
+        print(f"[ship] no feature worktree at {feature}", file=sys.stderr)
+        return 1
+
+    state = checkpoint.load(feature) or {}
+    if state.get("last_verdict") != "approve" and not args.force:
+        print(f"[ship] checkpoint verdict is "
+              f"'{state.get('last_verdict','<none>')}', not 'approve'. "
+              f"Pass --force to override.", file=sys.stderr)
+        return 3
+
+    branch = current_branch(feature)
+    if not branch or branch == "HEAD":
+        print("[ship] feature worktree is detached; can't ship",
+              file=sys.stderr)
+        return 1
+
+    repo = Path(proj["repo_path"]).expanduser()
+    base = args.base or detect_main_branch(repo)
+
+    if args.merge:
+        rc = merge_local(feature, repo, branch, base,
+                         squash=not args.no_squash)
+        action = "merged locally"
+    else:
+        rc = open_pr(feature, branch, base, state, args.project)
+        action = "PR opened"
+
+    if rc == 0:
+        if mark_shipped(proj.get("notion_id")):
+            print(f"[ship] Notion Projects row → Status=Shipped")
+        telegram.notify(
+            f"🚢 `{args.project}` shipped ({action}). "
+            f"Branch `{branch}` → `{base}`.",
+            level="info", source="invisible-ship",
+        )
+        print(f"[ship] done — {action}")
+        print(f"[ship] worktrees still on disk — remove them with: "
+              f"invisible-cleanup {args.project}")
+    else:
+        telegram.notify(
+            f"❌ `{args.project}` ship failed (rc={rc}, mode={action}).",
+            level="error", source="invisible-ship",
+        )
+    return rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

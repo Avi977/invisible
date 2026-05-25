@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# invisible — open the 6-pane cockpit in tmux.
+#
+# Usage:
+#   invisible                     # attach to (or create) the cockpit session
+#   invisible kill                # tear down the session
+#   invisible --project <name>    # pre-fill panes with project paths from invisible.toml
+
+set -euo pipefail
+
+INVISIBLE_HOME="${INVISIBLE_HOME:-$HOME/.invisible}"
+SESSION="cockpit"
+PROJECT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    kill) tmux kill-session -t "$SESSION" 2>/dev/null || true; exit 0 ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Re-attach if already running
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  exec tmux attach -t "$SESSION"
+fi
+
+# Read VPS host from config (best-effort; falls back to placeholder)
+VPS_HOST=$(python3 - <<'PY' 2>/dev/null || echo "your-vps"
+import os, tomllib
+p = os.path.expanduser("~/.invisible/invisible.toml")
+try:
+    with open(p, "rb") as f:
+        cfg = tomllib.load(f)
+    print(cfg.get("vps", {}).get("host", "your-vps"))
+except Exception:
+    print("your-vps")
+PY
+)
+USE_MOSH=$(python3 - <<'PY' 2>/dev/null || echo "false"
+import os, tomllib
+p = os.path.expanduser("~/.invisible/invisible.toml")
+try:
+    with open(p, "rb") as f:
+        cfg = tomllib.load(f)
+    print("true" if cfg.get("vps", {}).get("use_mosh") else "false")
+except Exception:
+    print("false")
+PY
+)
+
+SSH_CMD="ssh ${VPS_HOST}"
+[[ "$USE_MOSH" == "true" ]] && SSH_CMD="mosh ${VPS_HOST}"
+
+# Create the session with the navigator pane (pane 0)
+tmux new-session -d -s "$SESSION" -n "main" -c "$HOME"
+tmux send-keys -t "$SESSION:main.0" "clear && echo 'Navigator — invisible-new <client> <project> \"<task>\"' && echo" Enter
+
+# Split into the 6-pane grid (2 rows × 3 cols)
+tmux split-window -h -t "$SESSION:main.0" -c "$HOME"                # pane 1
+tmux split-window -h -t "$SESSION:main.1" -c "$HOME"                # pane 2
+tmux select-pane -t "$SESSION:main.0"
+tmux split-window -v -t "$SESSION:main.0" -c "$HOME"                # pane 3
+tmux select-pane -t "$SESSION:main.1"
+tmux split-window -v -t "$SESSION:main.1" -c "$HOME"                # pane 4
+tmux select-pane -t "$SESSION:main.2"
+tmux split-window -v -t "$SESSION:main.2" -c "$HOME"                # pane 5
+
+# tmux indexing after the splits, top-to-bottom, left-to-right:
+# 0: top-left      (Navigator)
+# 3: bottom-left   (Research)
+# 1: top-middle    (Codex)
+# 4: bottom-middle (VPS)
+# 2: top-right     (Claude)
+# 5: bottom-right  (Orchestrator/Logs)
+tmux select-layout -t "$SESSION:main" tiled
+
+# Title the panes
+tmux select-pane -t "$SESSION:main.0" -T "0 Navigator"
+tmux select-pane -t "$SESSION:main.1" -T "1 Codex"
+tmux select-pane -t "$SESSION:main.2" -T "2 Claude"
+tmux select-pane -t "$SESSION:main.3" -T "3 Research"
+tmux select-pane -t "$SESSION:main.4" -T "4 VPS"
+tmux select-pane -t "$SESSION:main.5" -T "5 Orchestrator / Logs"
+
+# Boot each pane with its role-specific banner / command
+tmux send-keys -t "$SESSION:main.1" "clear && echo '[Codex pane] cd to a feature worktree, then run: codex' && echo" Enter
+tmux send-keys -t "$SESSION:main.2" "clear && echo '[Claude pane] cd to a review worktree, then run: claude' && echo" Enter
+tmux send-keys -t "$SESSION:main.3" "clear && echo '[Research pane] cd to research/ worktree, web search, scratch notes' && echo" Enter
+tmux send-keys -t "$SESSION:main.4" "clear && echo '[VPS pane] connecting to ${VPS_HOST}...' && ${SSH_CMD}" Enter
+tmux send-keys -t "$SESSION:main.5" "clear && echo '[Orchestrator/Logs pane] tail $INVISIBLE_HOME/logs/orchestrator.log' && echo" Enter
+
+# If --project supplied, cd panes into the right worktrees
+if [[ -n "$PROJECT" ]]; then
+  ROOT="$INVISIBLE_HOME/worktrees/$PROJECT"
+  [[ -d "$ROOT/feature"  ]] && tmux send-keys -t "$SESSION:main.1" "cd '$ROOT/feature' && clear && git status -sb" Enter
+  [[ -d "$ROOT/review"   ]] && tmux send-keys -t "$SESSION:main.2" "cd '$ROOT/review'  && clear && git status -sb" Enter
+  [[ -d "$ROOT/research" ]] && tmux send-keys -t "$SESSION:main.3" "cd '$ROOT/research' && clear && ls -la" Enter
+fi
+
+# Source the invisible keybinds
+[[ -f "$INVISIBLE_HOME/tmux.conf" ]] && tmux source-file "$INVISIBLE_HOME/tmux.conf"
+
+tmux select-pane -t "$SESSION:main.0"
+exec tmux attach -t "$SESSION"

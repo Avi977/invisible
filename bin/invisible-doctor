@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""invisible-doctor — preflight checklist for the cockpit.
+
+Verifies the things that go wrong *between* installs, not at install time:
+  - codex / claude / git / ssh / tmux on PATH
+  - $INVISIBLE_HOME populated with prompts + lib + bin
+  - .env has NOTION_TOKEN + the 6 DB ids + (optional) Telegram creds
+  - invisible.toml parses and every project's repo_path is a git repo
+  - vps.host resolves via SSH non-interactively (BatchMode)
+  - Notion API responds with the configured token
+
+Exit code:
+  0  everything OK or only WARNs
+  1  any FAIL
+
+Output is human-readable; pipe through `grep FAIL` for CI.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+from config import home, load_env, load_toml  # noqa: E402
+
+
+PASS = "PASS"
+WARN = "WARN"
+FAIL = "FAIL"
+
+ICON = {PASS: "✓", WARN: "•", FAIL: "✗"}
+COLOR = {PASS: "\033[32m", WARN: "\033[33m", FAIL: "\033[31m"}
+RESET = "\033[0m"
+
+
+def report(results: list[tuple[str, str, str]]) -> int:
+    """Print results, return rc."""
+    width = max(len(name) for name, _, _ in results) + 2
+    for name, status, detail in results:
+        color = COLOR.get(status, "") if sys.stdout.isatty() else ""
+        reset = RESET if color else ""
+        print(f"  {color}{ICON[status]} {status:<4}{reset} {name:<{width}} {detail}")
+    fails = sum(1 for _, s, _ in results if s == FAIL)
+    warns = sum(1 for _, s, _ in results if s == WARN)
+    passes = sum(1 for _, s, _ in results if s == PASS)
+    print(f"\n  {passes} pass · {warns} warn · {fails} fail")
+    return 1 if fails else 0
+
+
+# ---------- individual checks ----------
+
+def check_binary(name: str) -> tuple[str, str, str]:
+    p = shutil.which(name)
+    if p:
+        return (f"bin: {name}", PASS, p)
+    return (f"bin: {name}", FAIL, "not on PATH")
+
+
+def check_invisible_home() -> list[tuple[str, str, str]]:
+    h = home()
+    out: list[tuple[str, str, str]] = []
+    out.append(("INVISIBLE_HOME", PASS if h.is_dir() else FAIL,
+                str(h) + ("" if h.is_dir() else "  (missing — run scripts/install.sh)")))
+    for sub in ("bin", "lib", "prompts", "worktrees", "logs"):
+        d = h / sub
+        out.append((f"  ./{sub}",
+                    PASS if d.is_dir() else (WARN if sub == "worktrees" else FAIL),
+                    "ok" if d.is_dir() else "missing"))
+    for prompt in ("codex_task.md", "claude_review.md", "standup.md", "gsd_pick.md"):
+        f = h / "prompts" / prompt
+        out.append((f"  prompts/{prompt}",
+                    PASS if f.exists() else FAIL,
+                    "ok" if f.exists() else "missing"))
+    return out
+
+
+def check_env() -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    env_path = home() / ".env"
+    if not env_path.exists():
+        return [(".env", FAIL, f"{env_path} not found — copy from .env.example")]
+    notion_tok = os.environ.get("NOTION_TOKEN", "")
+    if not notion_tok:
+        out.append(("NOTION_TOKEN", FAIL, "unset — Notion writes will no-op"))
+    elif notion_tok.endswith("xxxx") or "xxxxxx" in notion_tok:
+        out.append(("NOTION_TOKEN", FAIL,
+                    "still set to the .env.example placeholder — paste your real token"))
+    else:
+        out.append(("NOTION_TOKEN", PASS, "set"))
+
+    def _looks_placeholder(s: str) -> bool:
+        return "xxxxxxxx" in s or s == s[:1] * len(s)
+
+    for db in ("CLIENTS", "PROJECTS", "REVIEWS", "STANDUPS", "GSD", "HEALTH"):
+        var = f"NOTION_DB_{db}"
+        v = os.environ.get(var, "")
+        if not v:
+            out.append((var, FAIL, "unset — run invisible-bootstrap-notion"))
+        elif _looks_placeholder(v):
+            out.append((var, FAIL,
+                        "placeholder value — run invisible-bootstrap-notion"))
+        elif len(v) < 30:
+            out.append((var, WARN, "set but looks malformed (too short)"))
+        else:
+            out.append((var, PASS, f"{v[:8]}…"))
+    tg_tok = os.environ.get("TELEGRAM_BOT_TOKEN")
+    tg_chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if tg_tok and tg_chat:
+        out.append(("Telegram", PASS, "configured"))
+    else:
+        out.append(("Telegram", WARN,
+                    "not configured — Telegram alerts are no-op (optional)"))
+    return out
+
+
+def check_notion_api() -> tuple[str, str, str]:
+    tok = os.environ.get("NOTION_TOKEN")
+    if not tok:
+        return ("Notion API", WARN, "skipped (NOTION_TOKEN unset)")
+    req = urllib.request.Request(
+        "https://api.notion.com/v1/users/me",
+        headers={"Authorization": f"Bearer {tok}",
+                 "Notion-Version": "2022-06-28"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = json.loads(r.read())
+            who = body.get("name") or body.get("bot", {}).get("owner", {}).get("type", "?")
+            return ("Notion API", PASS, f"authenticated as {who}")
+    except urllib.error.HTTPError as e:
+        return ("Notion API", FAIL, f"HTTP {e.code} — token rejected")
+    except Exception as e:
+        return ("Notion API", FAIL, f"{e}")
+
+
+def check_repos(cfg: dict) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    projects = cfg.get("projects", []) or []
+    if not projects:
+        return [("projects in invisible.toml", WARN,
+                 "none configured — add [[projects]] blocks")]
+    for p in projects:
+        name = p.get("name", "?")
+        repo = Path(p.get("repo_path", "")).expanduser()
+        if not repo.exists():
+            out.append((f"project: {name}", FAIL, f"repo_path {repo} missing"))
+        elif not (repo / ".git").exists():
+            out.append((f"project: {name}", FAIL, f"{repo} is not a git repo"))
+        else:
+            tag = "" if p.get("notion_id") else "  (no notion_id; invisible-new will create one)"
+            out.append((f"project: {name}", PASS, f"{repo}{tag}"))
+    return out
+
+
+def check_ssh(cfg: dict) -> tuple[str, str, str]:
+    vps = (cfg.get("vps") or {})
+    host = vps.get("host")
+    if not host:
+        return ("ssh: vps.host", WARN, "no vps.host configured")
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host, "true"]
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if r.returncode == 0:
+        return (f"ssh: {host}", PASS, "non-interactive auth works")
+    snippet = (r.stderr.strip().splitlines() or [""])[0][:120]
+    return (f"ssh: {host}", FAIL, snippet or f"rc={r.returncode}")
+
+
+def check_codex_login() -> tuple[str, str, str]:
+    """Best-effort: codex --version proves the binary is functional."""
+    if not shutil.which("codex"):
+        return ("codex auth", FAIL, "binary missing")
+    r = subprocess.run(["codex", "--version"], capture_output=True,
+                       text=True, timeout=10, check=False)
+    if r.returncode == 0:
+        return ("codex --version", PASS, r.stdout.strip() or "ok")
+    return ("codex --version", WARN, "binary present but version check failed")
+
+
+def check_claude_login() -> tuple[str, str, str]:
+    if not shutil.which("claude"):
+        return ("claude auth", FAIL, "binary missing")
+    r = subprocess.run(["claude", "--version"], capture_output=True,
+                       text=True, timeout=10, check=False)
+    if r.returncode == 0:
+        return ("claude --version", PASS, r.stdout.strip() or "ok")
+    return ("claude --version", WARN, "binary present but version check failed")
+
+
+def main() -> int:
+    load_env()
+    cfg = load_toml()
+
+    print("invisible-doctor — preflight\n")
+
+    print("[binaries]")
+    bin_results = [check_binary(b) for b in ("codex", "claude", "git", "ssh", "tmux")]
+    rc = report(bin_results)
+
+    print("\n[layout]")
+    rc |= report(check_invisible_home())
+
+    print("\n[env]")
+    rc |= report(check_env())
+
+    print("\n[notion]")
+    rc |= report([check_notion_api()])
+
+    print("\n[auth]")
+    rc |= report([check_codex_login(), check_claude_login()])
+
+    print("\n[repos]")
+    rc |= report(check_repos(cfg))
+
+    print("\n[ssh]")
+    rc |= report([check_ssh(cfg)])
+
+    print()
+    return 1 if rc else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

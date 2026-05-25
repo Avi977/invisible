@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""invisible-bootstrap-notion — create the 6 Notion databases automatically.
+
+Saves you from hand-creating Clients / Projects / Reviews / Standups /
+GSDSessions / HealthChecks with their schemas. Writes the resulting
+database IDs into ~/.invisible/.env (creates it if missing, idempotent).
+
+Prereqs:
+  1. Create a Notion internal integration: https://www.notion.so/profile/integrations
+  2. Copy the secret token into NOTION_TOKEN (env var, or paste when prompted).
+  3. Create a Notion page called "invisible" (or any name) and share it with
+     your integration. Copy its page ID (the 32-hex chunk in the URL).
+
+Usage:
+    NOTION_TOKEN=secret_xxx invisible-bootstrap-notion <parent-page-id>
+    # or, with token in ~/.invisible/.env already:
+    invisible-bootstrap-notion <parent-page-id>
+
+It's safe to re-run. If a database with the same name already exists in the
+parent page, that DB is reused (its id is written to .env) — nothing is duplicated.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+from config import home, load_env  # noqa: E402
+
+
+NOTION_VERSION = "2022-06-28"
+BASE = "https://api.notion.com/v1"
+
+# ---- Schemas ----
+# Each entry: (db_name, env_var, properties_dict)
+
+SCHEMAS = [
+    ("Clients", "NOTION_DB_CLIENTS", {
+        "Name":    {"title": {}},
+        "Status":  {"select": {"options": [
+            {"name": "Active"}, {"name": "Paused"}, {"name": "Archived"}]}},
+        "VPS host": {"rich_text": {}},
+        "Notes":   {"rich_text": {}},
+    }),
+    ("Projects", "NOTION_DB_PROJECTS", {
+        "Name":   {"title": {}},
+        "Status": {"select": {"options": [
+            {"name": "Idea"}, {"name": "Active"}, {"name": "Review"},
+            {"name": "Shipped"}, {"name": "Paused"}]}},
+        "Repo path": {"rich_text": {}},
+        "Created":   {"date": {}},
+    }),
+    ("Reviews", "NOTION_DB_REVIEWS", {
+        "Title":     {"title": {}},
+        "Iteration": {"number": {"format": "number"}},
+        "Agent": {"select": {"options": [
+            {"name": "Codex"}, {"name": "Claude"}, {"name": "Human"}]}},
+        "Verdict": {"select": {"options": [
+            {"name": "Approved"}, {"name": "Changes requested"},
+            {"name": "Comment"}, {"name": "Blocked"}]}},
+        "Summary":  {"rich_text": {}},
+        "Diff SHA": {"rich_text": {}},
+        "Created":  {"date": {}},
+    }),
+    ("Standups", "NOTION_DB_STANDUPS", {
+        "Date":      {"title": {}},
+        "Yesterday": {"rich_text": {}},
+        "Today":     {"rich_text": {}},
+        "Blockers":  {"rich_text": {}},
+    }),
+    ("GSDSessions", "NOTION_DB_GSD", {
+        "Title":   {"title": {}},
+        "Task":    {"rich_text": {}},
+        "Started": {"date": {}},
+        "Duration": {"number": {"format": "number"}},
+        "Outcome": {"select": {"options": [
+            {"name": "In progress"}, {"name": "Shipped"},
+            {"name": "Partial"}, {"name": "Carry-over"}, {"name": "Aborted"}]}},
+        "Notes":   {"rich_text": {}},
+    }),
+    ("HealthChecks", "NOTION_DB_HEALTH", {
+        "Timestamp": {"title": {}},
+        "Target": {"select": {"options": [
+            {"name": "Local"}, {"name": "VPS"}, {"name": "Service"}]}},
+        "Status": {"select": {"options": [
+            {"name": "OK"}, {"name": "Warn"}, {"name": "Fail"}]}},
+        # NB: format is plain "number" — invisible-health writes raw 0..100 values.
+        # Notion's "percent" format expects a fraction (0.65 → 65%) so plain
+        # number is correct here.
+        "Disk %":   {"number": {"format": "number"}},
+        "CPU load": {"number": {"format": "number"}},
+        "Details":  {"rich_text": {}},
+    }),
+]
+
+# Relations added in a second pass, once base DBs exist
+RELATIONS = [
+    ("Projects", "Client",          "Clients"),
+    ("Reviews", "Project",          "Projects"),
+    ("Standups", "Active projects", "Projects"),
+    ("GSDSessions", "Project",      "Projects"),
+]
+
+
+def request(method: str, path: str, body: dict | None = None) -> dict:
+    tok = os.environ.get("NOTION_TOKEN")
+    if not tok:
+        print("NOTION_TOKEN unset", file=sys.stderr); sys.exit(2)
+    req = urllib.request.Request(
+        f"{BASE}{path}", method=method,
+        headers={
+            "Authorization": f"Bearer {tok}",
+            "Notion-Version": NOTION_VERSION,
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(body).encode() if body else None,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        print(f"HTTP {e.code}: {e.read().decode()[:400]}", file=sys.stderr)
+        sys.exit(1)
+
+
+def find_existing_db(parent_id: str, name: str) -> str | None:
+    # Notion search: returns DBs the integration can see; filter by parent.
+    r = request("POST", "/search", {
+        "query": name,
+        "filter": {"property": "object", "value": "database"},
+        "page_size": 50,
+    })
+    parent_dashes = re.sub(r"-", "", parent_id)
+    for hit in r.get("results", []):
+        if hit.get("object") != "database": continue
+        title = "".join(t.get("plain_text", "") for t in hit.get("title", []))
+        if title != name: continue
+        parent = hit.get("parent", {})
+        hit_parent = parent.get("page_id", "").replace("-", "")
+        if hit_parent == parent_dashes:
+            return hit["id"]
+    return None
+
+
+def get_db(db_id: str) -> dict:
+    return request("GET", f"/databases/{db_id}")
+
+
+def patch_db_schema(db_id: str, desired: dict) -> list[str]:
+    """Add any properties from `desired` that the existing DB is missing.
+    Returns the list of property names that were added. Doesn't touch
+    existing properties (Notion's API for changing a property's type is
+    lossy — we'd rather leave it alone than risk data loss)."""
+    try:
+        existing = get_db(db_id)
+    except SystemExit:
+        return []
+    existing_props = set((existing.get("properties") or {}).keys())
+    missing = {k: v for k, v in desired.items() if k not in existing_props}
+    if not missing:
+        return []
+    # PATCH /databases — only send the new properties. Notion merges these in.
+    request("PATCH", f"/databases/{db_id}", {"properties": missing})
+    return list(missing.keys())
+
+
+def create_db(parent_id: str, name: str, properties: dict) -> str:
+    r = request("POST", "/databases", {
+        "parent": {"type": "page_id", "page_id": parent_id},
+        "title": [{"type": "text", "text": {"content": name}}],
+        "properties": properties,
+    })
+    return r["id"]
+
+
+def add_relation(db_id: str, prop_name: str, target_db_id: str) -> None:
+    request("PATCH", f"/databases/{db_id}", {
+        "properties": {
+            prop_name: {
+                "relation": {
+                    "database_id": target_db_id,
+                    "type": "single_property",
+                    "single_property": {},
+                }
+            }
+        }
+    })
+
+
+def write_env(updates: dict[str, str]) -> None:
+    """Line-aware writeback. Edits existing key=value lines in place;
+    appends any new keys at the end. Preserves comments and ordering."""
+    env_path = home() / ".env"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if env_path.exists():
+        lines = env_path.read_text().splitlines()
+    else:
+        lines = []
+
+    remaining = dict(updates)
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in remaining:
+            lines[i] = f"{key}={remaining.pop(key)}"
+
+    if remaining:
+        if lines and lines[-1].strip() != "":
+            lines.append("")
+        lines.append("# invisible-bootstrap-notion appended these")
+        for k, v in remaining.items():
+            lines.append(f"{k}={v}")
+
+    env_path.write_text("\n".join(lines) + "\n")
+    print(f"\nwrote {len(updates)} keys to {env_path} "
+          f"(comments + order preserved)")
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print(__doc__); return 2
+    parent = sys.argv[1].strip().replace("-", "")
+    load_env()
+    if not os.environ.get("NOTION_TOKEN"):
+        os.environ["NOTION_TOKEN"] = input("NOTION_TOKEN (paste): ").strip()
+
+    print(f"bootstrapping into parent page {parent} ...")
+    ids: dict[str, str] = {}
+    for name, env_var, props in SCHEMAS:
+        existing = find_existing_db(parent, name)
+        if existing:
+            added = patch_db_schema(existing, props)
+            if added:
+                print(f"  ↺ {name:14s} → reusing {existing}, "
+                      f"added {len(added)} new property(ies): {', '.join(added)}")
+            else:
+                print(f"  · {name:14s} → reusing {existing}")
+            ids[name] = existing
+        else:
+            new_id = create_db(parent, name, props)
+            print(f"  ✓ {name:14s} → created {new_id}")
+            ids[name] = new_id
+
+    print("\nadding cross-DB relations ...")
+    for db_name, prop_name, target_name in RELATIONS:
+        try:
+            add_relation(ids[db_name], prop_name, ids[target_name])
+            print(f"  ✓ {db_name}.{prop_name} → {target_name}")
+        except SystemExit:
+            print(f"  ! {db_name}.{prop_name} relation failed (may already exist)")
+
+    env_updates = {env_var: ids[name] for name, env_var, _ in SCHEMAS}
+    write_env(env_updates)
+    print("\nbootstrap complete. invisible can now write to Notion.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

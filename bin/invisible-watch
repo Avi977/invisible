@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""invisible-watch — keep the orchestrator alive.
+
+Runs invisible-review for a project; if it dies (any non-zero exit), saves state
+to Notion via checkpoint, waits BACKOFF seconds, and restarts with --resume.
+Sends Telegram alerts on each death and revival. Optionally hands off to the
+VPS after N consecutive local failures.
+
+Usage:
+    invisible-watch <project>                       # local-only, --continuous
+    invisible-watch <project> --vps-fallback 3      # after 3 local deaths, hand off to VPS
+    invisible-watch <project> --max-restarts 10
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import telegram  # noqa: E402
+from config import home, load_env, load_toml  # noqa: E402
+
+BACKOFF_BASE_S = 30
+HARD_BACKOFF_CAP_S = 600
+
+
+def vps_config() -> dict:
+    cfg = load_toml()
+    return cfg.get("vps", {})
+
+
+def project_repo_remote_path(project: str) -> str:
+    """Where the repo lives on the VPS (set under [[projects]] in invisible.toml)."""
+    cfg = load_toml()
+    for p in cfg.get("projects", []):
+        if p.get("name") == project:
+            return p.get("vps_repo_path", "")
+    return ""
+
+
+def handoff_to_vps(project: str) -> int:
+    vps = vps_config(); host = vps.get("host")
+    remote = project_repo_remote_path(project)
+    if not host:
+        telegram.notify("VPS handoff requested but no vps.host in invisible.toml",
+                        level="error", source="invisible-watch")
+        return 1
+    if not remote:
+        telegram.notify(
+            f"VPS handoff requested for `{project}` but no vps_repo_path "
+            f"configured. Set it under [[projects]] in invisible.toml.",
+            level="error", source="invisible-watch",
+        )
+        return 1
+    telegram.notify(f"🛰  Handing off `{project}` to VPS `{host}`...",
+                    level="warn", source="invisible-watch")
+    # Push current state from local feature worktree
+    feature = home() / "worktrees" / project / "feature"
+    branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(feature), capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    if not branch or branch == "HEAD":
+        telegram.notify(
+            f"VPS handoff: `{project}` feature worktree is detached; cannot push.",
+            level="error", source="invisible-watch",
+        )
+        return 1
+    subprocess.run(["git", "add", ".invisible-checkpoint.json"],
+                   cwd=str(feature), check=False)
+    subprocess.run(["git", "commit", "-m", "checkpoint: handoff to vps",
+                    "--allow-empty"], cwd=str(feature), check=False)
+    push = subprocess.run(["git", "push", "-u", "origin", branch],
+                          cwd=str(feature), check=False)
+    if push.returncode != 0:
+        telegram.notify(f"VPS handoff: git push failed for `{project}`/{branch}",
+                        level="error", source="invisible-watch")
+        return 1
+    # Check out the feature branch on the remote regardless of its current HEAD.
+    remote_cmd = (
+        f"cd {remote} && git fetch origin && "
+        f"git checkout -B {branch} origin/{branch} && git pull --ff-only && "
+        f"invisible-review {project} --continuous --resume"
+    )
+    ssh_cmd = ["ssh", host, "bash", "-lc", remote_cmd]
+    print(f"[watch] exec: {' '.join(ssh_cmd)}")
+    r = subprocess.run(ssh_cmd, check=False)
+    telegram.notify(f"VPS run for `{project}` exited rc={r.returncode}",
+                    level="info" if r.returncode == 0 else "warn",
+                    source="invisible-watch")
+    return r.returncode
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-watch")
+    ap.add_argument("project")
+    ap.add_argument("--max-restarts", type=int, default=20)
+    ap.add_argument("--vps-fallback", type=int, default=0,
+                    help="after N consecutive local failures, hand off to VPS")
+    args = ap.parse_args()
+
+    load_env()
+    restarts = 0
+    consec_failures = 0
+    telegram.notify(f"🔁 watcher up for `{args.project}`",
+                    level="info", source="invisible-watch")
+
+    while restarts < args.max_restarts:
+        cmd = ["invisible-review", args.project, "--continuous"]
+        if restarts > 0 or (home() / "worktrees" / args.project / "feature"
+                            / ".invisible-checkpoint.json").exists():
+            cmd.append("--resume")
+        print(f"[watch] launch #{restarts+1}: {' '.join(cmd)}")
+        rc = subprocess.run(cmd).returncode
+        if rc == 0:
+            telegram.notify(f"✅ orchestrator for `{args.project}` exited clean",
+                            level="info", source="invisible-watch")
+            return 0
+        consec_failures += 1
+        restarts += 1
+        telegram.notify(
+            f"⚠️  orchestrator for `{args.project}` died (rc={rc}); "
+            f"restart {restarts}/{args.max_restarts}, "
+            f"consec failures {consec_failures}",
+            level="warn", source="invisible-watch",
+        )
+
+        if args.vps_fallback and consec_failures >= args.vps_fallback:
+            return handoff_to_vps(args.project)
+
+        sleep_s = min(BACKOFF_BASE_S * (2 ** (consec_failures - 1)), HARD_BACKOFF_CAP_S)
+        print(f"[watch] sleeping {sleep_s}s before restart")
+        time.sleep(sleep_s)
+
+    telegram.notify(f"🛑 watcher giving up on `{args.project}` after "
+                    f"{restarts} restarts", level="error", source="invisible-watch")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

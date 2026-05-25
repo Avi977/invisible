@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""invisible-gsd — Get Shit Done.
+
+Picks the single highest-leverage task across your active projects, frames the
+first action, time-boxes the block, and logs the session to Notion. The "do it
+now" companion to invisible-standup's "what should I do today".
+
+Usage:
+    invisible-gsd                            # pick + 50-min default block
+    invisible-gsd --minutes 25               # short pomodoro
+    invisible-gsd --task "fix login bug" --project api-rewrite
+                                           # skip the picker
+    invisible-gsd --review                   # hand the picked task to invisible-review
+                                           # (codex writes, claude reviews)
+    invisible-gsd --dry                      # pick + print only; don't log/start timer
+
+Flow:
+    1. Pull active projects + last-7d reviews from Notion (skipped with --task).
+    2. Ask Claude for one JSON: {project, task, first_action,
+       definition_of_done, rationale}.
+    3. Print a clean focus card, start a countdown in this pane.
+    4. Log a "GSD session" row to Notion with Outcome=In progress.
+    5. When the timer ends (or you Ctrl-C), prompt for outcome (1/2/3/4)
+       and notes, then PATCH the row with the result.
+    6. If --review, fork invisible-review with the picked task before the timer.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import markdown_vault  # noqa: E402
+import notion  # noqa: E402
+from config import home, load_env, load_toml  # noqa: E402
+
+
+# Where the cross-session tracker keeps per-project state.
+# (Set by ~/.claude/CLAUDE.md — auto-managed by SessionStart + Stop hooks.)
+TRACKER_ROOT = Path(os.path.expanduser("~/.claude/state/projects"))
+
+
+OUTCOMES = {
+    "1": "Shipped",
+    "2": "Partial",
+    "3": "Carry-over",
+    "4": "Aborted",
+}
+
+
+def extract_title(page: dict) -> str:
+    for v in page.get("properties", {}).values():
+        if v.get("type") == "title":
+            return "".join(t.get("plain_text", "") for t in v.get("title", []))
+    return "(untitled)"
+
+
+def extract_prop(page: dict, key: str) -> str:
+    p = page.get("properties", {}).get(key, {})
+    t = p.get("type")
+    if t == "rich_text":
+        return "".join(x.get("plain_text", "") for x in p.get("rich_text", []))
+    if t == "select":
+        return (p.get("select") or {}).get("name", "")
+    return ""
+
+
+def read_tracker_todos() -> list[tuple[str, str, str]]:
+    """Read open todos from ~/.claude/state/projects/*/current.md.
+
+    Returns a list of (project_slug, status_marker, todo_text) tuples.
+    status_marker is whatever's in the bullet's [bracket] (e.g. 'i' for
+    in-progress, 'p' for pending) — we leave it raw so Claude sees the
+    same vocabulary the tracker uses.
+    """
+    if not TRACKER_ROOT.is_dir():
+        return []
+    todos: list[tuple[str, str, str]] = []
+    todo_line_re = re.compile(r"^\s*-\s*\[([^\]]+)\]\s*(.+?)\s*$")
+    for project_dir in sorted(TRACKER_ROOT.iterdir()):
+        cur = project_dir / "current.md"
+        if not cur.is_file():
+            continue
+        try:
+            text = cur.read_text(errors="replace")
+        except OSError:
+            continue
+        # Section is "## Open todos (recent sessions)" — collect bullets
+        # under it until the next blank line or next header.
+        in_section = False
+        for line in text.splitlines():
+            if line.startswith("## "):
+                in_section = line.lower().startswith("## open todos")
+                continue
+            if not in_section:
+                continue
+            if not line.strip():
+                in_section = False
+                continue
+            m = todo_line_re.match(line)
+            if m:
+                todos.append((project_dir.name, m.group(1), m.group(2)))
+    return todos
+
+
+def build_picker_context() -> str:
+    projects = notion.query_active_projects()
+    reviews = notion.query_recent_reviews(hours=24 * 7)
+    tracker_todos = read_tracker_todos()
+
+    lines = ["## Active projects (from Notion)"]
+    for p in projects:
+        lines.append(f"- {extract_title(p)} (status: {extract_prop(p, 'Status')})")
+
+    if tracker_todos:
+        lines.append("\n## Open todos (from ~/.claude/state tracker)")
+        # Group by project slug for readability.
+        by_proj: dict[str, list[tuple[str, str]]] = {}
+        for slug, marker, text in tracker_todos:
+            by_proj.setdefault(slug, []).append((marker, text))
+        for slug, items in by_proj.items():
+            lines.append(f"### {slug}")
+            for marker, text in items:
+                lines.append(f"- [{marker}] {text}")
+
+    lines.append("\n## Reviews in the last 7 days")
+    for r in reviews[:40]:
+        lines.append(f"- {extract_title(r)} — {extract_prop(r, 'Agent')} / "
+                     f"{extract_prop(r, 'Verdict')} — {extract_prop(r, 'Summary')}")
+    return "\n".join(lines)
+
+
+def call_claude_picker(ctx: str) -> dict | None:
+    sys_prompt = (home() / "prompts" / "gsd_pick.md").read_text()
+    prompt = f"{sys_prompt}\n\n---\n{ctx}"
+    try:
+        r = subprocess.run(
+            ["claude", "-p", prompt], capture_output=True, text=True,
+            timeout=120, check=False,
+        )
+    except FileNotFoundError:
+        print("[gsd] claude CLI not found; falling back to first active project",
+              file=sys.stderr)
+        return None
+    raw = r.stdout.strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        import re
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+    print(f"[gsd] could not parse Claude pick:\n{raw[:400]}", file=sys.stderr)
+    return None
+
+
+def find_project_notion_id(name: str) -> str | None:
+    cfg = load_toml()
+    for p in cfg.get("projects", []):
+        if p.get("name") == name:
+            return p.get("notion_id")
+    return None
+
+
+def banner(pick: dict, minutes: int) -> str:
+    line = "═" * 64
+    end = (dt.datetime.now() + dt.timedelta(minutes=minutes)).strftime("%H:%M")
+    return (
+        f"\n{line}\n"
+        f"  🎯 FOCUS BLOCK — {minutes} min, ends at {end}\n"
+        f"  Project          : {pick.get('project','?')}\n"
+        f"  Task             : {pick.get('task','?')}\n"
+        f"  First action     : {pick.get('first_action','?')}\n"
+        f"  Definition of done: {pick.get('definition_of_done','?')}\n"
+        f"  Why this         : {pick.get('rationale','?')}\n"
+        f"{line}\n"
+    )
+
+
+def countdown(minutes: int) -> None:
+    """Print a one-line tick every 30s. Ctrl-C ends early."""
+    total = minutes * 60
+    end_ts = time.monotonic() + total
+    try:
+        while True:
+            remaining = end_ts - time.monotonic()
+            if remaining <= 0:
+                break
+            mm, ss = divmod(int(remaining), 60)
+            sys.stdout.write(f"\r⏳ {mm:02d}:{ss:02d} remaining   (Ctrl-C to end early) ")
+            sys.stdout.flush()
+            time.sleep(min(30, remaining))
+        sys.stdout.write("\n⏰ Time's up.\n")
+    except KeyboardInterrupt:
+        sys.stdout.write("\n⏹  Ended early.\n")
+
+
+def prompt_outcome() -> tuple[str, str]:
+    """Prompt for outcome + notes. Ctrl-C / Ctrl-D returns ('Aborted', '')
+    so the caller can still close out the Notion row instead of leaving it
+    forever stuck on 'In progress'."""
+    print("\nOutcome:")
+    for k, v in OUTCOMES.items():
+        print(f"  {k}) {v}")
+    try:
+        choice = input("Pick 1-4: ").strip() or "3"
+        outcome = OUTCOMES.get(choice, "Carry-over")
+        notes = input("Notes (one line, optional): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\n[gsd] outcome prompt interrupted — marking Aborted")
+        return "Aborted", ""
+    return outcome, notes
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-gsd")
+    ap.add_argument("--minutes", type=int, default=50)
+    ap.add_argument("--task")
+    ap.add_argument("--project")
+    ap.add_argument("--review", action="store_true",
+                    help="kick off invisible-review with the picked task before the timer")
+    ap.add_argument("--dry", action="store_true")
+    args = ap.parse_args()
+
+    load_env()
+
+    if args.task and args.project:
+        pick = {
+            "project": args.project, "task": args.task,
+            "first_action": "open the project worktree",
+            "definition_of_done": "the task is done",
+            "rationale": "user-specified",
+        }
+    else:
+        ctx = build_picker_context()
+        pick = call_claude_picker(ctx)
+        if not pick:
+            print("[gsd] no pick available — pass --task and --project to override")
+            return 1
+
+    print(banner(pick, args.minutes))
+    if args.dry:
+        return 0
+
+    project_name = pick.get("project", "")
+    project_id = find_project_notion_id(project_name)
+    page = notion.log_gsd_start(
+        project_id=project_id, project_name=project_name,
+        task=pick.get("task", ""), duration_min=args.minutes,
+    )
+    page_id = (page or {}).get("id", "")
+    started_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    if args.review and project_name:
+        print(f"[gsd] forking invisible-review for {project_name}...")
+        subprocess.Popen(
+            ["invisible-review", project_name, "--task", pick.get("task", "")],
+            stdout=open(home() / "logs" / "gsd-review.log", "a"),
+            stderr=subprocess.STDOUT,
+        )
+
+    countdown(args.minutes)
+    outcome, notes = prompt_outcome()
+    notion.update_gsd_outcome(page_id=page_id, outcome=outcome, notes=notes)
+
+    # Mirror to Logseq vault for graph view.
+    markdown_vault.writer().write_session(
+        project=project_name, task=pick.get("task", ""),
+        started_iso=started_iso, duration_min=args.minutes,
+        outcome=outcome, notes=notes,
+    )
+
+    print(f"[gsd] logged: {outcome} — {notes or '(no notes)'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,54 @@
+# ── Secrets (NEVER commit) ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+.ssh/
+
+# ── Local config (user-specific; commit the .example) ──────────────────
+invisible.toml
+
+# ── Python ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Runtime state ──────────────────────────────────────────────────────
+logs/
+*.log
+worktrees/
+checkpoints/
+.invisible-checkpoint.json
+.invisible-state/
+
+# ── OS / editor ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.iml
+
+# ── Tauri / Node (future UI shell) ─────────────────────────────────────
+node_modules/
+src-tauri/target/
+src-tauri/Cargo.lock
+dist/
+*.dmg
+*.msi
+*.exe.zip

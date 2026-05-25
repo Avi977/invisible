@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# pre-push: regenerate CHANGELOG.md from git history. If it changed, block
+# the push and tell the user to commit the update. This guarantees the
+# changelog on the remote always reflects the commits being pushed.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[pre-push] python3 not on PATH — skipping changelog check" >&2
+  exit 0
+fi
+
+python3 scripts/update-changelog.py >/dev/null
+
+if ! git diff --quiet -- CHANGELOG.md; then
+  cat <<'MSG' >&2
+
+[pre-push] CHANGELOG.md is out of date.
+
+The pre-push hook regenerated it from your commit history. Review the diff,
+then commit it before pushing again:
+
+    git diff CHANGELOG.md
+    git add CHANGELOG.md
+    git commit -m "docs: update CHANGELOG"
+    git push
+
+MSG
+  exit 1
+fi

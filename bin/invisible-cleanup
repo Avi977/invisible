@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""invisible-cleanup — remove the 3 worktrees for a finished project.
+
+Safe by default: refuses to remove any worktree with uncommitted changes
+or with un-pushed commits relative to the local branch's upstream. Pass
+--force to ignore those checks.
+
+Usage:
+    invisible-cleanup <project>
+    invisible-cleanup <project> --force      # ignore safety checks
+    invisible-cleanup <project> --keep-branches
+                                           # remove worktrees, keep refs
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+from config import home, load_env, load_toml  # noqa: E402
+
+
+def find_repo(project: str) -> Path | None:
+    cfg = load_toml()
+    for p in cfg.get("projects", []):
+        if p.get("name") == project:
+            return Path(p["repo_path"]).expanduser()
+    return None
+
+
+def dirty(worktree: Path) -> bool:
+    """True if there are uncommitted changes (staged, unstaged, or untracked)."""
+    if not worktree.exists():
+        return False
+    r = subprocess.run(["git", "status", "--porcelain"],
+                       cwd=str(worktree), capture_output=True, text=True, check=False)
+    return bool(r.stdout.strip())
+
+
+def unpushed(worktree: Path) -> bool:
+    """True if HEAD has commits the upstream doesn't have. Returns False if
+    no upstream is configured (we treat that as 'nothing to push to')."""
+    if not worktree.exists():
+        return False
+    r = subprocess.run(
+        ["git", "rev-list", "--count", "@{u}..HEAD"],
+        cwd=str(worktree), capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return False
+    try:
+        return int(r.stdout.strip()) > 0
+    except ValueError:
+        return False
+
+
+def remove_worktree(repo: Path, wt: Path, force: bool) -> int:
+    if not wt.exists():
+        print(f"  · {wt.name:9s} (already gone)")
+        return 0
+    cmd = ["git", "-C", str(repo), "worktree", "remove"]
+    if force:
+        cmd.append("--force")
+    cmd.append(str(wt))
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if r.returncode == 0:
+        print(f"  ✓ {wt.name:9s} removed")
+        return 0
+    print(f"  ✗ {wt.name:9s} failed: {r.stderr.strip()}", file=sys.stderr)
+    return r.returncode
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-cleanup")
+    ap.add_argument("project")
+    ap.add_argument("--force", action="store_true",
+                    help="ignore dirty / unpushed checks")
+    ap.add_argument("--keep-branches", action="store_true",
+                    help="don't delete the underlying feature/research branches")
+    args = ap.parse_args()
+
+    load_env()
+    repo = find_repo(args.project)
+    if not repo:
+        print(f"[cleanup] project '{args.project}' not in invisible.toml",
+              file=sys.stderr)
+        return 1
+
+    root = home() / "worktrees" / args.project
+    if not root.exists():
+        print(f"[cleanup] no worktrees for {args.project} at {root}")
+        return 0
+
+    worktrees = {role: root / role for role in ("research", "feature", "review")}
+
+    # Capture each worktree's branch before removal so we can delete only
+    # the branches that belong to this project (not all feature/* in the repo).
+    branches: list[str] = []
+    for role in ("feature", "research"):
+        wt = worktrees[role]
+        if not wt.exists():
+            continue
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(wt), capture_output=True, text=True, check=False,
+        )
+        br = r.stdout.strip()
+        if br and br != "HEAD":
+            branches.append(br)
+
+    # Safety: scan for dirty / unpushed state in research + feature.
+    # (Review is detached HEAD by design — never has uncommitted work.)
+    if not args.force:
+        issues: list[str] = []
+        for role in ("research", "feature"):
+            wt = worktrees[role]
+            if dirty(wt):
+                issues.append(f"{role}: uncommitted changes")
+            if unpushed(wt):
+                issues.append(f"{role}: unpushed commits")
+        if issues:
+            print(f"[cleanup] refusing to remove {args.project} — would lose work:",
+                  file=sys.stderr)
+            for x in issues:
+                print(f"  • {x}", file=sys.stderr)
+            print(f"  pass --force to override", file=sys.stderr)
+            return 2
+
+    print(f"[cleanup] removing worktrees for {args.project}:")
+    rc = 0
+    for role in ("review", "feature", "research"):  # review first (detached)
+        rc |= remove_worktree(repo, worktrees[role], args.force)
+
+    # Empty parent dir
+    try:
+        root.rmdir()
+    except OSError:
+        pass
+
+    if not args.keep_branches:
+        # Only delete branches we captured from the removed worktrees.
+        # -d (not -D) keeps git's safety net for unmerged branches unless --force.
+        flag = "-D" if args.force else "-d"
+        for br in branches:
+            d = subprocess.run(
+                ["git", "-C", str(repo), "branch", flag, br],
+                capture_output=True, text=True, check=False,
+            )
+            if d.returncode == 0:
+                print(f"  ✓ branch {br} deleted")
+            else:
+                print(f"  · branch {br} kept ({d.stderr.strip().splitlines()[0] if d.stderr.strip() else 'refused'})")
+
+    return rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

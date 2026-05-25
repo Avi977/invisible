@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# invisible-review — kick off the codex↔claude turn-taking loop.
+#
+# Usage:
+#   invisible-review <project> [--task "..."] [--max-iters 4]
+#
+# Reads task from feature/task.md if --task is omitted. Streams to stdout
+# AND $INVISIBLE_HOME/logs/orchestrator.log.
+
+set -euo pipefail
+INVISIBLE_HOME="${INVISIBLE_HOME:-$HOME/.invisible}"
+exec python3 "$INVISIBLE_HOME/lib/orchestrator.py" "$@"

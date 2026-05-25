@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""invisible-history — local iteration log for one project.
+
+Pulls the project's checkpoint + the feature worktree's git log and shows
+iteration-by-iteration what happened: SHA, verdict, summary, file count,
+per-iter token usage (when available). Doesn't touch Notion — useful on
+the VPS, on a plane, or when Notion is down.
+
+Usage:
+    invisible-history <project>
+    invisible-history <project> --files       # also list files touched per iter
+    invisible-history <project> --feedback    # include the feedback text
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def home() -> Path:
+    return Path(os.path.expanduser(os.environ.get("INVISIBLE_HOME", "~/.invisible")))
+
+
+def humanize_age(iso: str) -> str:
+    try:
+        when = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return "?"
+    delta = dt.datetime.now(dt.timezone.utc) - when
+    s = int(delta.total_seconds())
+    if s < 60:    return f"{s}s"
+    if s < 3600:  return f"{s//60}m"
+    if s < 86400: return f"{s//3600}h"
+    return f"{s//86400}d"
+
+
+def feature_path(project: str) -> Path:
+    return home() / "worktrees" / project / "feature"
+
+
+def load_state(project: str) -> dict | None:
+    cp = feature_path(project) / ".invisible-checkpoint.json"
+    if not cp.exists():
+        return None
+    try:
+        return json.loads(cp.read_text())
+    except json.JSONDecodeError:
+        return None
+
+
+def git_log_for_iters(feature: Path) -> list[dict]:
+    """Walk back commits made by the orchestrator (subject starts with
+    'iter '). Returns list ordered oldest → newest."""
+    if not feature.exists():
+        return []
+    fmt = "%H%x1f%h%x1f%cI%x1f%s"
+    r = subprocess.run(
+        ["git", "log", "--pretty=format:" + fmt],
+        cwd=str(feature), capture_output=True, text=True, check=False,
+    )
+    out: list[dict] = []
+    for line in r.stdout.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) != 4:
+            continue
+        full_sha, short_sha, when, subject = parts
+        if not subject.startswith("iter "):
+            continue
+        # Extract iter number
+        try:
+            n = int(subject.split()[1].rstrip(":"))
+        except (IndexError, ValueError):
+            continue
+        # Diffstat: files changed in this commit
+        d = subprocess.run(
+            ["git", "show", "--stat", "--format=", full_sha],
+            cwd=str(feature), capture_output=True, text=True, check=False,
+        )
+        files = []
+        for diffstat in d.stdout.splitlines():
+            diffstat = diffstat.strip()
+            if not diffstat or diffstat.startswith(("|", "*")):
+                continue
+            if "|" in diffstat:
+                files.append(diffstat.split("|", 1)[0].strip())
+        out.append({
+            "iter": n, "sha": short_sha, "full_sha": full_sha,
+            "when": when, "subject": subject, "files": files,
+        })
+    out.sort(key=lambda x: x["iter"])
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-history")
+    ap.add_argument("project")
+    ap.add_argument("--files", action="store_true",
+                    help="list files touched per iteration")
+    ap.add_argument("--feedback", action="store_true",
+                    help="include the structured feedback for each iter")
+    args = ap.parse_args()
+
+    state = load_state(args.project)
+    if state is None:
+        print(f"[history] no checkpoint for {args.project}", file=sys.stderr)
+        return 1
+
+    commits = git_log_for_iters(feature_path(args.project))
+    by_iter = {c["iter"]: c for c in commits}
+    per_iter_usage = {u["iter"]: u for u in (state.get("usage_per_iter") or [])}
+    fb_history = state.get("feedback_history", []) or []
+
+    print(f"# {args.project}")
+    task_first = (state.get("task") or "").splitlines()[0]
+    if task_first:
+        print(f"  task   : {task_first[:120]}")
+    print(f"  host   : {state.get('host', '?')}")
+    print(f"  verdict: {state.get('last_verdict') or '—'}  "
+          f"(last summary: {state.get('last_summary', '')[:80]})")
+    print(f"  cost   : ${(state.get('usage_total') or {}).get('cost_usd', 0):.4f} cumulative\n")
+
+    total = state.get("iteration", 0)
+    if total == 0:
+        print("  (no iterations yet)")
+        return 0
+
+    for n in range(1, total + 1):
+        c = by_iter.get(n)
+        u = per_iter_usage.get(n)
+        fb = fb_history[n - 1] if n - 1 < len(fb_history) else None
+
+        head = f"## iter {n}"
+        if c:
+            head += f"  {c['sha']}  {humanize_age(c['when'])} ago"
+        if u:
+            head += (f"  · ${u.get('cost_usd', 0):.4f} "
+                     f"({u.get('input_tokens', 0):,} in / "
+                     f"{u.get('output_tokens', 0):,} out)")
+        print(head)
+        if c and args.files and c["files"]:
+            for f in c["files"][:30]:
+                print(f"    - {f}")
+            if len(c["files"]) > 30:
+                print(f"    ... and {len(c['files']) - 30} more")
+        if args.feedback and fb:
+            # feedback is a multi-line markdown blob; indent it
+            for line in fb.splitlines():
+                print(f"    {line}")
+        print()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

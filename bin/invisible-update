@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# invisible-update — refresh code in $INVISIBLE_HOME from a source tree.
+#
+# Unlike scripts/install.sh, this:
+#   - never touches .zshrc / .bashrc
+#   - never overwrites .env or invisible.toml
+#   - copies bin/, lib/, prompts/, tmux.conf, completions/
+#   - prints which files changed (best-effort diff summary)
+#
+# Source tree resolution order:
+#   1. --src <path>
+#   2. $INVISIBLE_SRC env var
+#   3. directory containing this script's parent's parent
+#      (i.e. when running ~/invisible/bin/invisible-update, src = ~/invisible)
+#
+# Usage:
+#   invisible-update                 # copy from auto-detected source tree
+#   invisible-update --src ~/code/invisible
+#   invisible-update --dry           # show what would change, copy nothing
+
+set -euo pipefail
+
+INVISIBLE_HOME="${INVISIBLE_HOME:-$HOME/.invisible}"
+SRC=""
+DRY=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --src)   SRC="$2"; shift 2 ;;
+    --dry)   DRY=1; shift ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+if [[ -z "$SRC" ]]; then
+  SRC="${INVISIBLE_SRC:-}"
+fi
+if [[ -z "$SRC" ]]; then
+  # ~/.invisible/bin/invisible-update → .../invisible/bin/invisible-update — but the
+  # ".invisible" home is the *install* target, not the *source*. So this only
+  # works when the user is running from inside the source checkout's bin/.
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  CAND="$(cd "$SCRIPT_DIR/.." && pwd)"
+  if [[ -d "$CAND/bin" && -d "$CAND/lib" && -d "$CAND/config/prompts" ]]; then
+    SRC="$CAND"
+  fi
+fi
+
+if [[ -z "$SRC" || ! -d "$SRC" ]]; then
+  echo "[update] couldn't find source tree." >&2
+  echo "         pass --src <path>, or set INVISIBLE_SRC, or run from inside the checkout." >&2
+  exit 2
+fi
+
+if [[ "$SRC" == "$INVISIBLE_HOME" ]]; then
+  echo "[update] source and target are the same ($SRC) — nothing to do." >&2
+  exit 0
+fi
+
+echo "[update] source : $SRC"
+echo "[update] target : $INVISIBLE_HOME"
+[[ $DRY -eq 1 ]] && echo "[update] DRY RUN — no files will be written"
+
+# Best-effort diff summary: enumerate files that differ.
+changed=0
+list_changed() {
+  local src_dir="$1" dst_dir="$2" pattern="$3"
+  while IFS= read -r -d '' f; do
+    local rel="${f#"$src_dir/"}"
+    local dst="$dst_dir/$rel"
+    if [[ ! -f "$dst" ]]; then
+      echo "  + $rel"
+      changed=$((changed + 1))
+    elif ! cmp -s "$f" "$dst"; then
+      echo "  ~ $rel"
+      changed=$((changed + 1))
+    fi
+  done < <(find "$src_dir" -maxdepth 1 -type f -name "$pattern" -print0)
+}
+
+echo "[update] changes in bin/"
+list_changed "$SRC/bin" "$INVISIBLE_HOME/bin" "*"
+echo "[update] changes in lib/"
+list_changed "$SRC/lib" "$INVISIBLE_HOME/lib" "*.py"
+echo "[update] changes in prompts/"
+list_changed "$SRC/config/prompts" "$INVISIBLE_HOME/prompts" "*.md"
+
+if [[ -f "$SRC/config/tmux.conf" ]]; then
+  if [[ ! -f "$INVISIBLE_HOME/tmux.conf" ]]; then
+    echo "  + tmux.conf"
+    changed=$((changed + 1))
+  elif ! cmp -s "$SRC/config/tmux.conf" "$INVISIBLE_HOME/tmux.conf"; then
+    echo "  ~ tmux.conf"
+    changed=$((changed + 1))
+  fi
+fi
+
+if [[ $changed -eq 0 ]]; then
+  echo "[update] nothing to update — already in sync."
+  exit 0
+fi
+
+if [[ $DRY -eq 1 ]]; then
+  echo "[update] $changed file(s) would change."
+  exit 0
+fi
+
+# Do the copy. Same pattern as install.sh but no shell-rc edits.
+mkdir -p "$INVISIBLE_HOME"/{bin,lib,prompts,completions}
+find "$SRC/bin"            -maxdepth 1 -type f -exec cp {} "$INVISIBLE_HOME/bin/" \;
+find "$SRC/lib"            -maxdepth 1 -type f -name '*.py' -exec cp {} "$INVISIBLE_HOME/lib/" \;
+find "$SRC/config/prompts" -maxdepth 1 -type f -name '*.md' -exec cp {} "$INVISIBLE_HOME/prompts/" \;
+cp "$SRC/config/tmux.conf" "$INVISIBLE_HOME/tmux.conf"
+if [[ -d "$SRC/scripts/completions" ]]; then
+  cp "$SRC/scripts/completions/_invisible.zsh" "$INVISIBLE_HOME/completions/_invisible" 2>/dev/null || true
+  cp "$SRC/scripts/completions/invisible.bash" "$INVISIBLE_HOME/completions/invisible.bash" 2>/dev/null || true
+fi
+chmod +x "$INVISIBLE_HOME"/bin/*
+
+echo "[update] done — $changed file(s) updated."
+echo "[update] reload tmux config in your cockpit:  tmux source-file ~/.invisible/tmux.conf"

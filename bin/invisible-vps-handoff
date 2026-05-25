@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""invisible-vps-handoff — push checkpoint + branch, then resume on the VPS.
+
+This is the "manual" version of what invisible-watch does on failure. Useful
+when you want to walk away from your laptop and have the VPS keep grinding.
+
+Continuity contract:
+  - code lives in git (pushed)
+  - loop cursor lives in .invisible-checkpoint.json (committed)
+  - review history lives in Notion (queried from either machine)
+
+Both machines need:
+  - working `claude` CLI (logged in)
+  - working `codex` CLI (logged in)
+  - the same project listed in invisible.toml with a vps_repo_path
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import telegram  # noqa: E402
+from config import home, load_env, load_toml  # noqa: E402
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-vps-handoff")
+    ap.add_argument("project")
+    ap.add_argument("--continuous", action="store_true", default=True)
+    ap.add_argument("--detach", action="store_true",
+                    help="launch on the VPS inside a tmux session and return")
+    args = ap.parse_args()
+
+    load_env()
+    cfg = load_toml()
+    vps = cfg.get("vps", {}); host = vps.get("host")
+    if not host:
+        print("vps.host not set in invisible.toml", file=sys.stderr); return 1
+
+    proj = next((p for p in cfg.get("projects", []) if p.get("name") == args.project), {})
+    remote = proj.get("vps_repo_path")
+    if not remote:
+        print(f"vps_repo_path not set for project '{args.project}'", file=sys.stderr)
+        return 1
+
+    feature = home() / "worktrees" / args.project / "feature"
+    if not feature.exists():
+        print(f"no feature worktree for {args.project}", file=sys.stderr); return 1
+
+    branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(feature), capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    if not branch or branch == "HEAD":
+        print("[handoff] feature worktree is detached; refusing to push",
+              file=sys.stderr)
+        return 2
+
+    print(f"[handoff] committing checkpoint + pushing {branch}...")
+    subprocess.run(["git", "add", ".invisible-checkpoint.json"],
+                   cwd=str(feature), check=False)
+    subprocess.run(["git", "commit", "-m", "checkpoint: handoff",
+                    "--allow-empty"], cwd=str(feature), check=False)
+    # -u sets upstream on first push; harmless on subsequent pushes.
+    push = subprocess.run(["git", "push", "-u", "origin", branch],
+                          cwd=str(feature), check=False)
+    if push.returncode != 0:
+        print("git push failed; aborting handoff", file=sys.stderr); return 2
+
+    flags = "--continuous --resume" if args.continuous else "--resume"
+    # Check out the *feature* branch on the remote, not whatever was there
+    # before. `git fetch` + `git checkout -B <branch> origin/<branch>` is
+    # safe whether or not the branch already exists locally on the VPS.
+    setup = (
+        f"cd {remote} && git fetch origin && "
+        f"git checkout -B {branch} origin/{branch} && git pull --ff-only"
+    )
+    if args.detach:
+        remote_cmd = (
+            f"{setup} && tmux new-session -d -s invisible-{args.project} "
+            f"'invisible-review {args.project} {flags}'"
+        )
+    else:
+        remote_cmd = f"{setup} && invisible-review {args.project} {flags}"
+
+    telegram.notify(f"🛰  Handing off `{args.project}` to `{host}` "
+                    f"({'detached' if args.detach else 'interactive'})",
+                    level="info", source="invisible-vps-handoff")
+
+    return subprocess.run(["ssh", host, "bash", "-lc", remote_cmd]).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

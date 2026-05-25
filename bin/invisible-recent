@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""invisible-recent — tail of Notion Reviews from the terminal.
+
+Useful when you want to glance at what claude has been saying without
+opening Notion.
+
+Usage:
+    invisible-recent                       # last 20 across all projects
+    invisible-recent --project api-rewrite # filter via Notion relation
+    invisible-recent -n 50                 # bigger tail
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import notion  # noqa: E402
+from config import load_env, load_toml  # noqa: E402
+
+
+def extract_title(page: dict) -> str:
+    for v in page.get("properties", {}).values():
+        if v.get("type") == "title":
+            return "".join(t.get("plain_text", "") for t in v.get("title", [])) or "(untitled)"
+    return "(untitled)"
+
+
+def extract_prop(page: dict, key: str) -> str:
+    p = page.get("properties", {}).get(key, {})
+    t = p.get("type")
+    if t == "rich_text":
+        return "".join(x.get("plain_text", "") for x in p.get("rich_text", []))
+    if t == "select":
+        return (p.get("select") or {}).get("name", "")
+    if t == "number":
+        n = p.get("number")
+        return "" if n is None else str(n)
+    if t == "date":
+        return (p.get("date") or {}).get("start", "")
+    return ""
+
+
+def humanize_age(iso: str) -> str:
+    try:
+        when = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return "?"
+    delta = dt.datetime.now(dt.timezone.utc) - when
+    s = int(delta.total_seconds())
+    if s < 60:    return f"{s}s"
+    if s < 3600:  return f"{s//60}m"
+    if s < 86400: return f"{s//3600}h"
+    return f"{s//86400}d"
+
+
+VERDICT_COLOR = {
+    "Approved": "\033[32m",
+    "Changes requested": "\033[33m",
+    "Blocked": "\033[31m",
+    "Comment": "\033[36m",
+}
+RESET = "\033[0m"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-recent")
+    ap.add_argument("-n", "--count", type=int, default=20,
+                    help="how many rows to print (default 20)")
+    ap.add_argument("--project",
+                    help="filter by project name (must be in invisible.toml with notion_id)")
+    args = ap.parse_args()
+
+    load_env()
+    project_id: str | None = None
+    if args.project:
+        cfg = load_toml()
+        proj = next((p for p in cfg.get("projects", [])
+                     if p.get("name") == args.project), None)
+        if not proj:
+            print(f"[recent] project '{args.project}' not in invisible.toml",
+                  file=sys.stderr)
+            return 1
+        project_id = proj.get("notion_id") or None
+        if not project_id:
+            print(f"[recent] project '{args.project}' has no notion_id in invisible.toml; "
+                  f"falling back to unfiltered tail",
+                  file=sys.stderr)
+
+    rows = notion.query_recent_reviews(project_id=project_id, page_size=args.count)
+    if not rows:
+        print("(no reviews — Notion empty, NOTION_TOKEN unset, or filter matched nothing)")
+        return 0
+
+    print(f"{'AGE':>5}  {'AGENT':<6}  {'VERDICT':<18}  {'ITER':>4}  TITLE  ·  SUMMARY")
+    print("-" * 100)
+    for row in rows:
+        age = humanize_age(extract_prop(row, "Created"))
+        agent = extract_prop(row, "Agent")
+        verdict = extract_prop(row, "Verdict")
+        iter_n = extract_prop(row, "Iteration")
+        title = extract_title(row)
+        summary = extract_prop(row, "Summary")[:80]
+        color = VERDICT_COLOR.get(verdict, "") if sys.stdout.isatty() else ""
+        reset = RESET if color else ""
+        print(f"{age:>5}  {agent:<6}  {color}{verdict:<18}{reset}  "
+              f"{iter_n:>4}  {title}  ·  {summary}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

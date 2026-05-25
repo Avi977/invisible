@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Scaffold a new project: create 3 worktrees, seed a task file, and ensure
+the project (and its client) exist in Notion. Persists the Notion page IDs
+back into invisible.toml so subsequent `invisible-review` runs link reviews to
+the right Project row.
+
+Usage:
+    invisible-new <client> <project> "<task description>"
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+# Add lib/ to sys.path (assumes this script is in $INVISIBLE_HOME/bin)
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import markdown_vault  # noqa: E402
+import notion  # noqa: E402
+from config import home, load_env, load_toml  # noqa: E402
+from worktree import create_worktrees, slugify  # noqa: E402
+
+
+def _persist_notion_id(project_name: str, notion_id: str) -> bool:
+    """Write notion_id into the [[projects]] block matching project_name in
+    invisible.toml. Preserves comments and ordering. Returns True if the file
+    was modified."""
+    if not notion_id:
+        return False
+    toml_path = home() / "invisible.toml"
+    if not toml_path.exists():
+        return False
+    lines = toml_path.read_text().splitlines()
+    in_block = False           # are we inside *the* matching [[projects]] block?
+    block_start = -1
+    block_end = len(lines)
+    notion_line_idx = -1
+    name_re = re.compile(r'^\s*name\s*=\s*"' + re.escape(project_name) + r'"\s*$')
+    table_re = re.compile(r'^\s*\[\[?')
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.lstrip().startswith("[[projects]]"):
+            # scan ahead until next table header or EOF
+            j = i + 1
+            block_end_local = len(lines)
+            matched = False
+            notion_idx_local = -1
+            while j < len(lines):
+                inner = lines[j]
+                if inner.lstrip().startswith("[") and table_re.match(inner):
+                    block_end_local = j
+                    break
+                if name_re.match(inner):
+                    matched = True
+                if re.match(r'^\s*notion_id\s*=', inner):
+                    notion_idx_local = j
+                j += 1
+            if matched:
+                in_block = True
+                block_start = i
+                block_end = block_end_local
+                notion_line_idx = notion_idx_local
+                break
+            i = j
+            continue
+        i += 1
+
+    if not in_block:
+        return False
+
+    replacement = f'notion_id = "{notion_id}"'
+    if notion_line_idx >= 0:
+        if lines[notion_line_idx].strip() == replacement:
+            return False
+        lines[notion_line_idx] = re.sub(
+            r'^(\s*notion_id\s*=\s*).*$', r'\1"' + notion_id + '"',
+            lines[notion_line_idx],
+        )
+    else:
+        # Insert just before the block's end (or EOF)
+        lines.insert(block_end, replacement)
+
+    toml_path.write_text("\n".join(lines) + ("\n" if not lines[-1].endswith("\n") else ""))
+    return True
+
+
+def main() -> int:
+    if len(sys.argv) < 4:
+        print("usage: invisible-new <client> <project> \"<task>\"", file=sys.stderr)
+        return 2
+    client, project, task = sys.argv[1], sys.argv[2], " ".join(sys.argv[3:])
+
+    load_env()
+    cfg = load_toml()
+    proj_meta = next((p for p in cfg.get("projects", []) if p.get("name") == project), None)
+    if not proj_meta:
+        print(f"[invisible-new] project '{project}' not in invisible.toml — add it under [[projects]]",
+              file=sys.stderr)
+        return 1
+
+    repo = Path(proj_meta["repo_path"]).expanduser()
+    if not (repo / ".git").exists():
+        print(f"[invisible-new] {repo} is not a git repo", file=sys.stderr)
+        return 1
+
+    # Seed the Logseq vault so the graph has hubs ready before iter 1.
+    vault = markdown_vault.writer()
+    vault.write_home_if_missing()
+    vault.ensure_project(project, client=client, repo_path=str(repo))
+
+    paths = create_worktrees(repo, project, task)
+    slug = slugify(task)
+    (paths["feature"] / "task.md").write_text(
+        f"# Task: {task}\n\nClient: {client}\nProject: {project}\nSlug: {slug}\n"
+    )
+    print(f"[invisible-new] created worktrees for {project}/{slug}:")
+    for role, p in paths.items():
+        print(f"  {role:9s} {p}")
+
+    # Ensure Notion Project + Client rows exist; persist the project id so
+    # the orchestrator can link Reviews to the right page.
+    notion_id = proj_meta.get("notion_id")
+    if not notion_id:
+        notion_id = notion.find_or_create_project(
+            project, repo_path=str(repo), client_name=client,
+        )
+        if notion_id:
+            wrote = _persist_notion_id(project, notion_id)
+            tag = "wrote to invisible.toml" if wrote else "in-memory only"
+            print(f"[invisible-new] Notion project row: {notion_id} ({tag})")
+        else:
+            print("[invisible-new] note: no Notion project row created "
+                  "(NOTION_TOKEN/NOTION_DB_PROJECTS not set)")
+
+    print(f"\nNext: invisible --project {project}   (then run invisible-review in pane 5)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

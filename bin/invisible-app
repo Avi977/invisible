@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""invisible-app — native desktop client for the invisible cockpit.
+
+Architecture:
+
+    main thread       ── pywebview window (the dashboard, in a native
+                          chromeless window). Hides on close instead of
+                          quitting so the tray icon survives.
+    tray thread       ── pystray menubar/system-tray icon. Open / Show /
+                          Quit menu items.
+    sse thread        ── connects to ${INVISIBLE_SERVER_URL}/api/stream
+                          (or the local invisible-dashboard if server URL
+                          unset). Fires native notifications on milestone
+                          events (run approved, hit cap, claude blocked).
+
+Setup:
+    pip install --user pywebview pystray Pillow
+    # then run from your terminal or via Invisible.app (mac) /
+    # Invisible.exe (windows shortcut)
+
+Environment (sourced from ~/.invisible/.env + Infisical):
+    INVISIBLE_SERVER_URL          where the dashboard is served from
+                                  (defaults to http://127.0.0.1:8765 — the
+                                  local dashboard daemon)
+    INVISIBLE_DASHBOARD_TOKEN     bearer auth (vault-loaded)
+    INVISIBLE_SERVER_TOKEN        same role for VPS daemon
+    INVISIBLE_APP_WINDOW_W        window width (default 1200)
+    INVISIBLE_APP_WINDOW_H        window height (default 800)
+
+Failure modes:
+    - server unreachable    → app still launches, window shows
+                              "Cannot reach <url>" banner from the daemon
+                              when network returns
+    - SSE drops             → reconnects with backoff; tray notifications
+                              just pause
+    - no $DISPLAY (linux)   → app exits with a clear error
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import queue
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import webbrowser
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+from config import load_env  # noqa: E402
+
+# Third-party (installed via `pip install --user`)
+try:
+    import webview                                # pywebview
+    from pystray import Icon, Menu, MenuItem      # pystray
+    from PIL import Image, ImageDraw, ImageFont   # Pillow
+except ImportError as e:  # pragma: no cover
+    sys.stderr.write(
+        f"[invisible-app] missing dep: {e}\n"
+        f"install with:\n"
+        f"    python3 -m pip install --user pywebview pystray Pillow\n"
+    )
+    raise SystemExit(2)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Config resolution
+# ────────────────────────────────────────────────────────────────────────
+
+def server_url() -> str:
+    # If the user has a VPS daemon configured, prefer that. Otherwise
+    # fall back to the local invisible-dashboard.
+    return (os.environ.get("INVISIBLE_SERVER_URL")
+            or "http://127.0.0.1:8765").rstrip("/")
+
+
+def auth_token() -> str:
+    # The dashboard and the daemon use separate tokens. Whichever URL we
+    # picked above, use the matching token.
+    if os.environ.get("INVISIBLE_SERVER_URL"):
+        return os.environ.get("INVISIBLE_SERVER_TOKEN", "")
+    return os.environ.get("INVISIBLE_DASHBOARD_TOKEN", "")
+
+
+def window_url() -> str:
+    base = server_url()
+    tok = auth_token()
+    if tok:
+        return f"{base}/?token={urllib.parse.quote(tok)}"
+    return base
+
+
+def window_size() -> tuple[int, int]:
+    try:
+        w = int(os.environ.get("INVISIBLE_APP_WINDOW_W", "1200"))
+        h = int(os.environ.get("INVISIBLE_APP_WINDOW_H", "800"))
+        return w, h
+    except ValueError:
+        return 1200, 800
+
+
+# ────────────────────────────────────────────────────────────────────────
+# OS-native notifications (stdlib subprocess; no plyer dep)
+# ────────────────────────────────────────────────────────────────────────
+
+def notify(title: str, body: str) -> None:
+    """Best-effort native notification. Mac via osascript, Windows via
+    PowerShell ToastNotification, Linux via notify-send. Failures are
+    silent — we never want a missing notification helper to crash the app."""
+    sys_name = platform.system()
+    try:
+        if sys_name == "Darwin":
+            # AppleScript display-notification. Quotes escaped naively for
+            # the subset of chars we expect (no shell-out, list args).
+            t = title.replace('"', '\\"')
+            b = body.replace('"', '\\"')
+            subprocess.Popen([
+                "osascript", "-e",
+                f'display notification "{b}" with title "{t}"',
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif sys_name == "Windows":  # pragma: no cover (dev on mac)
+            ps_cmd = (
+                "[Windows.UI.Notifications.ToastNotificationManager,"
+                "Windows.UI.Notifications,ContentType=WindowsRuntime] | Out-Null;"
+                f"$title = '{title.replace(chr(39), chr(39)*2)}';"
+                f"$body  = '{body.replace(chr(39), chr(39)*2)}';"
+                "$template = [Windows.UI.Notifications.ToastNotificationManager]::"
+                "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
+                "$xml = $template.GetXml(); $text = $xml.GetElementsByTagName('text');"
+                "$text[0].AppendChild($xml.CreateTextNode($title)) | Out-Null;"
+                "$text[1].AppendChild($xml.CreateTextNode($body)) | Out-Null;"
+                "$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Invisible');"
+                "$notifier.Show([Windows.UI.Notifications.ToastNotification]::new($xml));"
+            )
+            subprocess.Popen(["powershell", "-Command", ps_cmd],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:  # Linux + others
+            subprocess.Popen(["notify-send", title, body],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (FileNotFoundError, OSError):
+        pass
+
+
+# ────────────────────────────────────────────────────────────────────────
+# SSE client (auto-reconnect, fires `on_event(dict)` per line)
+# ────────────────────────────────────────────────────────────────────────
+
+class SSEClient(threading.Thread):
+    """Long-running thread; pulls SSE from /api/stream and emits each
+    `data: {...}` line to `on_event`. Reconnects forever with exponential
+    backoff capped at 60s."""
+
+    def __init__(self, url: str, token: str, on_event):
+        super().__init__(daemon=True, name="sse")
+        self.url = url
+        self.token = token
+        self.on_event = on_event
+        self._stop = threading.Event()
+        self.last_id = 0
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        backoff = 2
+        while not self._stop.is_set():
+            try:
+                req = urllib.request.Request(
+                    self.url,
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                        "Accept": "text/event-stream",
+                        "Last-Event-ID": str(self.last_id),
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=None) as resp:
+                    backoff = 2  # reset on successful connect
+                    for raw in resp:
+                        if self._stop.is_set():
+                            return
+                        line = raw.decode(errors="replace").rstrip("\r\n")
+                        if line.startswith("id:"):
+                            try:
+                                self.last_id = int(line.split(":", 1)[1].strip())
+                            except ValueError:
+                                pass
+                        elif line.startswith("data:"):
+                            payload = line.split(":", 1)[1].strip()
+                            try:
+                                ev = json.loads(payload)
+                                self.on_event(ev)
+                            except json.JSONDecodeError:
+                                pass
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+                pass
+            if self._stop.is_set():
+                return
+            time.sleep(backoff)
+            backoff = min(60, backoff * 2)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Tray icon (in-memory generation; no asset file needed)
+# ────────────────────────────────────────────────────────────────────────
+
+def make_icon_image(size: int = 64) -> "Image.Image":
+    """Generate a simple 'i' glyph on a dark-circle background, so the
+    bundle has zero asset dependencies."""
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    pad = size // 8
+    # Dark circle
+    d.ellipse((pad, pad, size - pad, size - pad), fill=(15, 17, 21, 255),
+              outline=(120, 200, 140, 255), width=2)
+    # White 'i' glyph
+    cx = size // 2
+    d.rectangle((cx - 2, size // 3, cx + 2, size - size // 4),
+                fill=(229, 231, 235, 255))
+    d.ellipse((cx - 3, size // 4 - 3, cx + 3, size // 4 + 3),
+              fill=(229, 231, 235, 255))
+    return img
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Wiring: tray ↔ pywebview ↔ SSE
+# ────────────────────────────────────────────────────────────────────────
+
+class App:
+    def __init__(self, url: str, w: int, h: int, token: str) -> None:
+        self.url = url
+        self.token = token
+        self.window: Any = None
+        self.window_w = w
+        self.window_h = h
+        self.sse = SSEClient(
+            url=f"{server_url()}/api/stream",
+            token=token,
+            on_event=self._on_event,
+        )
+        self.tray_icon: Icon | None = None
+
+    # ── pywebview window ───────────────────────────────────────────────
+    def create_window(self) -> None:
+        self.window = webview.create_window(
+            title="Invisible",
+            url=self.url,
+            width=self.window_w, height=self.window_h,
+            min_size=(700, 500),
+            background_color="#0d0f12",
+        )
+        # Don't quit on close — hide and keep the tray + SSE alive.
+        self.window.events.closing += self._on_window_closing
+
+    def _on_window_closing(self) -> bool:
+        """pywebview hook: return False to prevent the window from being
+        destroyed. We hide it instead so the user can re-open from the tray."""
+        try:
+            self.window.hide()
+        except Exception:  # noqa: BLE001
+            return True  # if hiding fails, allow real close
+        return False
+
+    def show_window(self, _icon=None, _item=None) -> None:
+        try:
+            self.window.show()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ── SSE event handler ──────────────────────────────────────────────
+    def _on_event(self, ev: dict) -> None:
+        """Decide whether an event warrants a native notification."""
+        kind = ev.get("kind") or ""
+        project = ev.get("project") or "?"
+        machine = ev.get("machine") or ""
+        # For now we surface every checkpoint event. The daemon doesn't
+        # broadcast verdict directly, but the dashboard view updates live
+        # via the same stream — the notification is just "hey, look".
+        title = f"invisible · {project}"
+        body = f"new {kind} from {machine}" if machine else f"new {kind}"
+        notify(title, body)
+
+    # ── tray ───────────────────────────────────────────────────────────
+    def open_in_browser(self, _icon=None, _item=None) -> None:
+        webbrowser.open(self.url)
+
+    def quit_app(self, _icon=None, _item=None) -> None:
+        self.sse.stop()
+        if self.tray_icon:
+            self.tray_icon.stop()
+        # Destroy the pywebview window — start() will return + main exits.
+        try:
+            self.window.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def build_tray(self) -> Icon:
+        menu = Menu(
+            MenuItem("Open Invisible", self.show_window, default=True),
+            MenuItem("Open in browser", self.open_in_browser),
+            Menu.SEPARATOR,
+            MenuItem("Quit", self.quit_app),
+        )
+        self.tray_icon = Icon(
+            name="invisible",
+            icon=make_icon_image(),
+            title="Invisible",
+            menu=menu,
+        )
+        return self.tray_icon
+
+    # ── entry point ────────────────────────────────────────────────────
+    def run(self) -> None:
+        self.sse.start()
+        tray = self.build_tray()
+        # pystray runs its event loop in a detached thread so pywebview
+        # gets the main thread (required on macOS Cocoa).
+        tray.run_detached()
+        self.create_window()
+        webview.start()   # blocks until self.window.destroy() is called
+
+
+# ────────────────────────────────────────────────────────────────────────
+# main
+# ────────────────────────────────────────────────────────────────────────
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-app")
+    ap.add_argument("--url", help="override dashboard URL (default: env)")
+    ap.add_argument("--no-tray", action="store_true",
+                    help="skip the tray icon (use --no-tray when debugging)")
+    args = ap.parse_args()
+
+    load_env()  # .env + Infisical pull
+
+    url = args.url or window_url()
+    tok = auth_token()
+    w, h = window_size()
+
+    sys.stderr.write(f"[invisible-app] opening {url.split('?')[0]} "
+                     f"({w}×{h}, tray={'off' if args.no_tray else 'on'})\n")
+
+    if args.no_tray:
+        # Window-only mode for debugging
+        webview.create_window("Invisible", url, width=w, height=h,
+                              background_color="#0d0f12")
+        webview.start()
+        return 0
+
+    app = App(url=url, w=w, h=h, token=tok)
+    app.run()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

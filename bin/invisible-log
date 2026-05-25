@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Ad-hoc log helper. Useful when you want to drop a manual note into Notion.
+
+Usage:
+    invisible-log review <project> "<summary>" --verdict approve --body "..."
+    invisible-log note   "<summary>"                          # → Reviews DB, agent=Human
+    cat review.md | invisible-log review <project> --stdin
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import notion  # noqa: E402
+from config import load_env, load_toml  # noqa: E402
+
+
+def find_project_id(name: str) -> str | None:
+    cfg = load_toml()
+    for p in cfg.get("projects", []):
+        if p.get("name") == name:
+            return p.get("notion_id")
+    return None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="kind", required=True)
+
+    r = sub.add_parser("review")
+    r.add_argument("project")
+    r.add_argument("summary", nargs="?", default="")
+    r.add_argument("--verdict", default="Comment",
+                   choices=["Approved", "Changes requested", "Comment", "Blocked"])
+    r.add_argument("--body", default="")
+    r.add_argument("--stdin", action="store_true")
+    r.add_argument("--agent", default="Human")
+    r.add_argument("--iteration", type=int, default=0)
+
+    n = sub.add_parser("note")
+    n.add_argument("summary")
+    n.add_argument("--body", default="")
+
+    args = ap.parse_args()
+    load_env()
+
+    if args.kind == "review":
+        body = sys.stdin.read() if args.stdin else args.body
+        proj_id = find_project_id(args.project)
+        notion.log_review(project_id=proj_id, iteration=args.iteration,
+                          agent=args.agent, verdict=args.verdict,
+                          summary=args.summary, body_md=body)
+        print(f"[invisible-log] review logged for {args.project}")
+    elif args.kind == "note":
+        notion.log_review(project_id=None, iteration=0, agent="Human",
+                          verdict="Comment", summary=args.summary, body_md=args.body)
+        print("[invisible-log] note logged")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

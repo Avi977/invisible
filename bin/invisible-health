@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Health check: local + VPS via SSH. Writes one row to Notion HealthChecks
+per target. Schedule via cron / launchd / systemd.
+
+Usage:
+    invisible-health             # check local + configured VPS
+    invisible-health --local     # local only
+    invisible-health --vps       # VPS only
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import notion  # noqa: E402
+import telegram  # noqa: E402
+from config import load_env, load_toml  # noqa: E402
+
+
+def parse_df_root(out: str) -> float:
+    """Find the % use of the / mountpoint from `df -h` output."""
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and parts[-1] == "/":
+            for tok in parts:
+                if tok.endswith("%"):
+                    try:
+                        return float(tok.rstrip("%"))
+                    except ValueError:
+                        pass
+    return 0.0
+
+
+def parse_load(out: str) -> float:
+    """Pull the 1-min load average from `uptime` output."""
+    if "load average" in out:
+        tail = out.split("load average")[1]
+        nums = tail.replace(":", "").replace(",", " ").split()
+        for n in nums:
+            try:
+                return float(n)
+            except ValueError:
+                continue
+    return 0.0
+
+
+def classify(disk: float, load: float, has_failed_units: bool) -> str:
+    if has_failed_units or disk > 95 or load > 8:
+        return "Fail"
+    if disk > 85 or load > 4:
+        return "Warn"
+    return "OK"
+
+
+def check_local() -> dict:
+    df = subprocess.run(["df", "-h"], capture_output=True, text=True, check=False).stdout
+    up = subprocess.run(["uptime"], capture_output=True, text=True, check=False).stdout
+    disk = parse_df_root(df); load = parse_load(up)
+    status = classify(disk, load, False)
+    details = f"$ df -h\n{df}\n$ uptime\n{up}"
+    return dict(target="Local", status=status, disk=disk, load=load, details=details)
+
+
+def check_vps(host: str, identity: str | None) -> dict:
+    if not host:
+        return dict(target="VPS", status="Fail", disk=0.0, load=0.0,
+                    details="no host configured")
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+    if identity:
+        ssh += ["-i", identity]
+    ssh += [host, "df -h && uptime && (systemctl --failed --no-legend 2>/dev/null || true)"]
+    r = subprocess.run(ssh, capture_output=True, text=True, timeout=30, check=False)
+    if r.returncode != 0:
+        return dict(target="VPS", status="Fail", disk=0.0, load=0.0,
+                    details=f"ssh failed (rc={r.returncode}):\n{r.stderr}")
+    out = r.stdout
+    disk = parse_df_root(out); load = parse_load(out)
+    failed_units = "loaded units listed" not in out and any(
+        line.strip() and not line.startswith(" ") and ".service" in line
+        for line in out.splitlines()
+    )
+    status = classify(disk, load, failed_units)
+    return dict(target="VPS", status=status, disk=disk, load=load, details=out)
+
+
+def check_service(svc: dict) -> dict:
+    """HTTP probe for a configured [[services]] entry.
+
+    Recognized keys: name, url, expect_status (default 200), timeout (default 10s).
+    Status is OK on match, Warn on connection/timeout, Fail on status mismatch.
+    """
+    name = svc.get("name", "service")
+    url = svc.get("url", "")
+    expect = int(svc.get("expect_status", 200))
+    timeout = float(svc.get("timeout", 10))
+    if not url:
+        return dict(target="Service", status="Fail", disk=0.0, load=0.0,
+                    details=f"{name}: no url configured")
+    start = time.monotonic()
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "invisible-health/1"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            code = r.status
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        if code == expect:
+            return dict(target="Service", status="OK", disk=0.0, load=0.0,
+                        details=f"{name} {url} → {code} in {elapsed_ms}ms")
+        return dict(target="Service", status="Fail", disk=0.0, load=0.0,
+                    details=f"{name} {url} → {code} (expected {expect}) in {elapsed_ms}ms")
+    except urllib.error.HTTPError as e:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        status = "OK" if e.code == expect else "Fail"
+        return dict(target="Service", status=status, disk=0.0, load=0.0,
+                    details=f"{name} {url} → HTTP {e.code} in {elapsed_ms}ms")
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        return dict(target="Service", status="Warn", disk=0.0, load=0.0,
+                    details=f"{name} {url}: {e} (after {elapsed_ms}ms)")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--local", action="store_true")
+    ap.add_argument("--vps", action="store_true")
+    ap.add_argument("--services", action="store_true",
+                    help="run only the [[services]] HTTP probes")
+    args = ap.parse_args()
+    # If no flag is given, run everything. If any flag is given, run only that.
+    any_flag = args.local or args.vps or args.services
+    do_local    = args.local    or not any_flag
+    do_vps      = args.vps      or not any_flag
+    do_services = args.services or not any_flag
+
+    load_env()
+    cfg = load_toml()
+    vps = cfg.get("vps", {})
+
+    results = []
+    if do_local:
+        results.append(check_local())
+    if do_vps:
+        results.append(check_vps(vps.get("host", ""), vps.get("identity")))
+    if do_services:
+        for svc in cfg.get("services", []) or []:
+            results.append(check_service(svc))
+
+    fails = []
+    for r in results:
+        line = (f"[{r['status']:>4}] {r['target']:<6} disk={r['disk']:.0f}% "
+                f"load={r['load']:.2f}")
+        print(line)
+        notion.log_health(target=r["target"], status=r["status"],
+                          disk_pct=r["disk"], cpu_load=r["load"],
+                          details=r["details"][:1800])
+        if r["status"] in ("Fail", "Warn"):
+            fails.append(r)
+
+    if fails:
+        body = "\n".join(
+            f"- {r['target']}: {r['status']} (disk={r['disk']:.0f}%, "
+            f"load={r['load']:.2f})" for r in fails
+        )
+        worst = "Fail" if any(r["status"] == "Fail" for r in fails) else "Warn"
+        telegram.notify(f"health check — {len(fails)} non-OK\n{body}",
+                        level="error" if worst == "Fail" else "warn",
+                        source="invisible-health")
+
+    return 0 if all(r["status"] != "Fail" for r in results) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

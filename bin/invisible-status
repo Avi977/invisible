@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""invisible-status — checkpoint inspector.
+
+Default (no args): a single status line meant for tmux's right side —
+    acme-api · iter 3/5 · changes · 14m
+Designed to be cheap; runs every 5s from the status bar. No network calls.
+
+With --verbose: multi-line dump of the latest checkpoint (or a named project).
+With --project <name>: pin to that project's checkpoint instead of "latest".
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def home() -> Path:
+    return Path(os.path.expanduser(os.environ.get("INVISIBLE_HOME", "~/.invisible")))
+
+
+def find_latest_checkpoint() -> tuple[Path, dict] | None:
+    root = home() / "worktrees"
+    if not root.exists():
+        return None
+    candidates: list[tuple[float, Path]] = []
+    for cp in root.glob("*/feature/.invisible-checkpoint.json"):
+        try:
+            candidates.append((cp.stat().st_mtime, cp))
+        except OSError:
+            continue
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    latest = candidates[0][1]
+    try:
+        return latest, json.loads(latest.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def load_named_checkpoint(project: str) -> tuple[Path, dict] | None:
+    cp = home() / "worktrees" / project / "feature" / ".invisible-checkpoint.json"
+    if not cp.exists():
+        return None
+    try:
+        return cp, json.loads(cp.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def humanize_age(iso: str) -> str:
+    try:
+        when = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return "?"
+    now = dt.datetime.now(dt.timezone.utc)
+    delta = now - when
+    s = int(delta.total_seconds())
+    if s < 60:    return f"{s}s"
+    if s < 3600:  return f"{s//60}m"
+    if s < 86400: return f"{s//3600}h"
+    return f"{s//86400}d"
+
+
+def print_terse(state: dict) -> None:
+    project = state.get("project", "?")
+    it = state.get("iteration", 0)
+    cap = state.get("max_iters", "∞")
+    verdict = state.get("last_verdict") or "—"
+    age = humanize_age(state.get("updated_at", ""))
+    print(f"{project} · iter {it}/{cap} · {verdict} · {age}")
+
+
+def print_verbose(path: Path, state: dict) -> None:
+    print(f"  checkpoint: {path}")
+    print(f"  project:    {state.get('project','?')}")
+    print(f"  host:       {state.get('host','?')}")
+    print(f"  iter:       {state.get('iteration', 0)} / "
+          f"{state.get('max_iters','∞')}")
+    print(f"  last sha:   {state.get('last_sha','—')}")
+    print(f"  verdict:    {state.get('last_verdict','—')}")
+    print(f"  summary:    {state.get('last_summary','')[:200]}")
+    print(f"  started:    {state.get('started_at','?')}  "
+          f"({humanize_age(state.get('started_at',''))} ago)")
+    print(f"  updated:    {state.get('updated_at','?')}  "
+          f"({humanize_age(state.get('updated_at',''))} ago)")
+    ctx = state.get("context_chars_used", 0)
+    print(f"  ctx used:   {ctx:,} chars (~{ctx // 4:,} tokens)")
+    u = state.get("usage_total") or {}
+    if u:
+        print(f"  claude:     {u.get('input_tokens', 0):,} in / "
+              f"{u.get('output_tokens', 0):,} out / "
+              f"{u.get('cache_read_input_tokens', 0):,} cache-read · "
+              f"${u.get('cost_usd', 0):.4f} cumulative")
+    task = state.get("task", "")
+    if task:
+        first = task.splitlines()[0]
+        print(f"  task:       {first[:120]}")
+    fb = state.get("feedback_history", []) or []
+    if fb:
+        print(f"  recent feedback (last 3 of {len(fb)}):")
+        for entry in fb[-3:]:
+            # Each entry is a "; "-joined or "\n"-joined string from issues+suggestions
+            preview = entry.replace("\n", " · ")[:200]
+            print(f"    - {preview}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-status")
+    ap.add_argument("--verbose", "-v", action="store_true",
+                    help="multi-line dump of the latest (or --project) checkpoint")
+    ap.add_argument("--project", help="show status for this project instead of latest")
+    args = ap.parse_args()
+
+    if args.project:
+        hit = load_named_checkpoint(args.project)
+    else:
+        hit = find_latest_checkpoint()
+
+    if hit is None:
+        print("idle" if not args.verbose else "no checkpoint found")
+        return 0
+
+    path, state = hit
+    if args.verbose:
+        print_verbose(path, state)
+    else:
+        print_terse(state)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

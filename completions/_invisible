@@ -1,0 +1,117 @@
+#compdef invisible invisible-new invisible-review invisible-ship invisible-cleanup \
+         invisible-watch invisible-vps-handoff invisible-history invisible-recent
+# invisible zsh tab-completion.
+#
+# Install:
+#   1. mkdir -p ~/.zsh/completions
+#   2. cp scripts/completions/_invisible.zsh ~/.zsh/completions/_invisible
+#      (note: drop the .zsh extension when copying — zsh expects "_<name>")
+#   3. Add to ~/.zshrc, BEFORE `compinit`:
+#        fpath=(~/.zsh/completions $fpath)
+#        autoload -Uz compinit && compinit
+#   4. open a new shell.
+#
+# What completes:
+#   - project name for any command/flag that takes one
+#   - subcommands for `invisible-log`
+#   - --pr / --merge / --base / --force etc. for invisible-ship
+#   - --resume / --continuous / --stop / --task / --max-iters for invisible-review
+
+_invisible_projects() {
+  local toml="${INVISIBLE_HOME:-$HOME/.invisible}/invisible.toml"
+  if [[ ! -f "$toml" ]]; then
+    return 1
+  fi
+  # Parse `name = "..."` lines that fall under [[projects]] blocks.
+  # awk state machine: `in_block` flips on/off as we cross [[projects]] / other tables.
+  local names
+  names=$(awk '
+    /^[[:space:]]*\[\[projects\]\][[:space:]]*$/ { in_block = 1; next }
+    /^[[:space:]]*\[/                            { in_block = 0 }
+    in_block && /^[[:space:]]*name[[:space:]]*=/ {
+      # name = "value"   → strip quotes + whitespace
+      sub(/^[^=]*=[[:space:]]*"?/, "")
+      sub(/"?[[:space:]]*$/, "")
+      print
+    }
+  ' "$toml" 2>/dev/null)
+  if [[ -z "$names" ]]; then
+    return 1
+  fi
+  local -a items
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && items+=("$line")
+  done <<< "$names"
+  _values "project" "${items[@]}"
+}
+
+_invisible() {
+  _arguments \
+    'kill[tear down the cockpit tmux session]' \
+    '--project[pre-fill panes with paths for this project]:project:_invisible_projects'
+}
+
+_invisible-new() {
+  _arguments \
+    '1:client:' \
+    '2:project:_invisible_projects' \
+    '*:task description:'
+}
+
+_invisible-review() {
+  _arguments \
+    '1:project:_invisible_projects' \
+    '--task[task description (defaults to feature/task.md)]:task:' \
+    '--max-iters[iteration cap]:n:' \
+    '--continuous[loop until approved or stopped]' \
+    '--resume[resume from saved checkpoint]' \
+    '--stop[signal a running orchestrator for this project]' \
+    '--force[ignore "already running" guard]'
+}
+
+_invisible-ship() {
+  _arguments \
+    '1:project:_invisible_projects' \
+    '--pr[open a GitHub PR via gh (default)]' \
+    '--merge[squash-merge into main locally]' \
+    '--no-squash[for --merge: use a merge commit]' \
+    '--base[base branch]:branch:' \
+    '--force[ship even if not approved]'
+}
+
+_invisible-cleanup() {
+  _arguments \
+    '1:project:_invisible_projects' \
+    '--force[ignore dirty/unpushed checks]' \
+    '--keep-branches[skip branch deletion]'
+}
+
+_invisible-watch() {
+  _arguments \
+    '1:project:_invisible_projects' \
+    '--max-restarts[give up after this many restarts]:n:' \
+    '--vps-fallback[hand off to VPS after N local failures]:n:'
+}
+
+_invisible-vps-handoff() {
+  _arguments \
+    '1:project:_invisible_projects' \
+    '--continuous' \
+    '--detach[wrap VPS run in tmux + return]'
+}
+
+_invisible-history() {
+  _arguments \
+    '1:project:_invisible_projects' \
+    '--files[list files touched per iter]' \
+    '--feedback[include feedback text]'
+}
+
+_invisible-recent() {
+  _arguments \
+    '-n[how many rows]:n:' \
+    '--count[how many rows]:n:' \
+    '--project[filter to this project]:project:_invisible_projects'
+}
+
+# Dispatch — zsh picks _<cmdname> automatically when compdef lists it above.

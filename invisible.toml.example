@@ -1,0 +1,24 @@
+# invisible main config.
+
+[vps]
+# Filled in once you decide to deploy invisible-server to srv982719.
+host = ""
+identity = "~/.ssh/id_ed25519"
+use_mosh = false
+
+[orchestrator]
+default_max_iters = 4
+codex_model = "gpt-5-codex"
+claude_model = "claude-sonnet-4-6"
+
+# ── Clients ─────────────────────────────────────────────────────────────
+[[clients]]
+name = "personal"
+
+# ── Projects ────────────────────────────────────────────────────────────
+[[projects]]
+name = "jobslayer"
+client = "personal"
+repo_path = "~/Projects/jobslayer"
+# vps_repo_path  = "/srv/jobslayer"   # set later if you want VPS handoff
+max_iters = 3

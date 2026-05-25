@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+"""invisible-dashboard — read-only HTTP view of the cockpit, phone-accessible.
+
+What it serves:
+  - /                   project list (HTML, mobile-friendly dark)
+  - /p/<project>        per-project drilldown (HTML)
+  - /api/projects       JSON list (for scripting + the HTML view's fetch)
+  - /api/p/<project>    JSON drilldown
+  - /api/reviews        recent Notion Reviews (cross-machine signal)
+  - /healthz            200 OK, no auth (for nginx/CF health probes)
+
+Authentication:
+  - Bearer token, required for everything except /healthz.
+  - Source the token from $INVISIBLE_DASHBOARD_TOKEN. If unset, one is
+    generated at startup and printed to stdout. Persist it across restarts
+    by exporting it in $INVISIBLE_HOME/.env.
+  - HTML pages also accept ?token=<t> in the URL so you can bookmark from
+    your phone. The API endpoints accept ?token= too but you probably want
+    to use the Authorization header for those.
+  - --no-auth disables auth entirely. Only use behind a trusted boundary
+    (loopback only, or your own VPN). The server refuses to start with
+    --no-auth unless --host is 127.0.0.1.
+
+What it does NOT do:
+  - Writes. Everything is GET. No POST, no kill switch.
+  - Cross-machine state aggregation. Shows whatever's in this machine's
+    $INVISIBLE_HOME/worktrees + whatever Notion has. If you run the
+    orchestrator on Mac and the dashboard on VPS, the project list will be
+    empty on the VPS side until you sync the checkpoint dir up. Notion
+    /api/reviews is the cross-machine view.
+
+Usage:
+    invisible-dashboard                              # 127.0.0.1:8765
+    invisible-dashboard --host 0.0.0.0 --port 8765   # LAN-accessible
+    INVISIBLE_DASHBOARD_TOKEN=mytoken invisible-dashboard --host 0.0.0.0
+"""
+
+from __future__ import annotations
+
+import argparse
+import hmac
+import json
+import os
+import secrets
+import socket
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+from config import home, load_env  # noqa: E402
+from dashboard_render import (  # noqa: E402
+    humanize_age, render_index, render_project, render_not_found,
+)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Data layer
+# ────────────────────────────────────────────────────────────────────────
+
+
+def pid_state(project: str) -> str:
+    pf = home() / "run" / f"{project}.pid"
+    if not pf.exists():
+        return "idle"
+    try:
+        pid = int(pf.read_text().strip())
+    except (OSError, ValueError):
+        return "stale"
+    try:
+        os.kill(pid, 0)
+        return "RUN"
+    except (OSError, ProcessLookupError):
+        return "stale"
+
+
+def list_projects() -> list[dict]:
+    root = home() / "worktrees"
+    if not root.exists():
+        return []
+    rows: list[dict] = []
+    for cp in root.glob("*/feature/.invisible-checkpoint.json"):
+        try:
+            state = json.loads(cp.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        project = state.get("project") or cp.parent.parent.name
+        cost = (state.get("usage_total") or {}).get("cost_usd", 0.0)
+        rows.append({
+            "project":    project,
+            "state":      pid_state(project),
+            "iter":       state.get("iteration", 0),
+            "max_iters":  state.get("max_iters", 0),
+            "verdict":    state.get("last_verdict") or "",
+            "summary":    state.get("last_summary") or "",
+            "sha":        state.get("last_sha") or "",
+            "host":       state.get("host") or "",
+            "updated_at": state.get("updated_at") or "",
+            "started_at": state.get("started_at") or "",
+            "age":        humanize_age(state.get("updated_at", "")),
+            "cost_usd":   round(float(cost), 4),
+            "task_first": (state.get("task") or "").splitlines()[0][:200],
+        })
+    rows.sort(key=lambda r: (0 if r["state"] == "RUN" else 1, r["updated_at"]),
+              reverse=False)
+    # Active first, then most-recently-updated:
+    rows.sort(key=lambda r: r["updated_at"], reverse=True)
+    rows.sort(key=lambda r: 0 if r["state"] == "RUN" else 1)
+    return rows
+
+
+def project_detail(project: str) -> dict | None:
+    cp = home() / "worktrees" / project / "feature" / ".invisible-checkpoint.json"
+    if not cp.exists():
+        return None
+    try:
+        state = json.loads(cp.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return {
+        "project":         state.get("project") or project,
+        "state":           pid_state(project),
+        "host":            state.get("host"),
+        "iter":            state.get("iteration", 0),
+        "max_iters":       state.get("max_iters", 0),
+        "last_sha":        state.get("last_sha"),
+        "last_verdict":    state.get("last_verdict"),
+        "last_summary":    state.get("last_summary"),
+        "task":            state.get("task"),
+        "started_at":      state.get("started_at"),
+        "updated_at":      state.get("updated_at"),
+        "started_age":     humanize_age(state.get("started_at", "")),
+        "updated_age":     humanize_age(state.get("updated_at", "")),
+        "usage_total":     state.get("usage_total") or {},
+        "usage_per_iter":  state.get("usage_per_iter") or [],
+        "feedback_history": state.get("feedback_history") or [],
+        "context_chars_used": state.get("context_chars_used", 0),
+    }
+
+
+def fetch_recent_reviews(n: int = 20) -> list[dict]:
+    """Hit Notion Reviews DB. Returns []
+    if NOTION_TOKEN or NOTION_DB_REVIEWS aren't set, or on any HTTP error."""
+    tok = os.environ.get("NOTION_TOKEN")
+    db = os.environ.get("NOTION_DB_REVIEWS")
+    if not tok or not db:
+        return []
+    req = urllib.request.Request(
+        f"https://api.notion.com/v1/databases/{db}/query",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {tok}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps({
+            "sorts": [{"property": "Created", "direction": "descending"}],
+            "page_size": min(max(n, 1), 100),
+        }).encode(),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            body = json.loads(r.read())
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError):
+        return []
+    results = []
+    for page in body.get("results", []):
+        props = page.get("properties", {})
+        def _rt(key):
+            p = props.get(key, {})
+            t = p.get("type")
+            if t == "title":
+                return "".join(x.get("plain_text", "") for x in p.get("title", []))
+            if t == "rich_text":
+                return "".join(x.get("plain_text", "") for x in p.get("rich_text", []))
+            if t == "select":
+                return (p.get("select") or {}).get("name", "")
+            if t == "number":
+                return p.get("number")
+            if t == "date":
+                return (p.get("date") or {}).get("start", "")
+            return ""
+        results.append({
+            "title":   _rt("Title"),
+            "iter":    _rt("Iteration"),
+            "agent":   _rt("Agent"),
+            "verdict": _rt("Verdict"),
+            "summary": _rt("Summary"),
+            "diff_sha": _rt("Diff SHA"),
+            "created": _rt("Created"),
+            "age":     humanize_age(_rt("Created") or ""),
+        })
+    return results
+
+
+# HTML rendering — shared with bin/invisible-server via lib/dashboard_render.py.
+# This local-only dashboard passes sse_path="" so no live-update script is
+# injected (we don't broadcast events from a single-machine view).
+
+
+# ────────────────────────────────────────────────────────────────────────
+# HTTP server
+# ────────────────────────────────────────────────────────────────────────
+
+class DashboardHandler(BaseHTTPRequestHandler):
+    server_version = "invisible-dashboard/1"
+
+    # Suppress the default access log spam; we only log auth failures.
+    def log_message(self, format, *args):  # noqa: A002, ARG002
+        return
+
+    # ---- auth ----
+    def _token_from_request(self) -> str | None:
+        hdr = self.headers.get("Authorization", "")
+        if hdr.startswith("Bearer "):
+            return hdr[7:].strip()
+        # Fallback: query string ?token=...
+        u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
+        if "token" in q:
+            return q["token"][0]
+        return None
+
+    def _auth_ok(self) -> bool:
+        if self.server.no_auth:  # type: ignore[attr-defined]
+            return True
+        expected = self.server.auth_token  # type: ignore[attr-defined]
+        got = self._token_from_request() or ""
+        return hmac.compare_digest(expected, got)
+
+    # ---- response helpers ----
+    def _send_html(self, body: str, status: int = 200) -> None:
+        b = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(b)
+
+    def _send_json(self, obj: Any, status: int = 200) -> None:
+        b = json.dumps(obj, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(b)
+
+    def _send_text(self, body: str, status: int = 200) -> None:
+        b = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    # ---- routing ----
+    def do_GET(self) -> None:  # noqa: N802
+        path = urllib.parse.urlparse(self.path).path
+
+        # No-auth health probe (for nginx + Cloudflare).
+        if path == "/healthz":
+            self._send_text("ok\n")
+            return
+
+        if not self._auth_ok():
+            sys.stderr.write(f"[dashboard] auth failed from {self.client_address[0]} for {path}\n")
+            self._send_text("unauthorized\n", 401)
+            return
+
+        token = self._token_from_request()
+
+        if path == "/" or path == "":
+            projects = list_projects()
+            reviews = fetch_recent_reviews(20)
+            self._send_html(render_index(projects, reviews, token))
+            return
+
+        if path.startswith("/p/"):
+            project = urllib.parse.unquote(path[3:].rstrip("/"))
+            detail = project_detail(project)
+            if not detail:
+                self._send_html(render_not_found(project, token), 404)
+                return
+            self._send_html(render_project(detail, token))
+            return
+
+        if path == "/api/projects":
+            self._send_json(list_projects())
+            return
+
+        if path.startswith("/api/p/"):
+            project = urllib.parse.unquote(path[7:].rstrip("/"))
+            detail = project_detail(project)
+            if not detail:
+                self._send_json({"error": "not found", "project": project}, 404)
+                return
+            self._send_json(detail)
+            return
+
+        if path == "/api/reviews":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            n = int(q.get("n", ["20"])[0])
+            self._send_json(fetch_recent_reviews(n))
+            return
+
+        self._send_text("not found\n", 404)
+
+
+def serve(host: str, port: int, token: str, no_auth: bool) -> None:
+    httpd = ThreadingHTTPServer((host, port), DashboardHandler)
+    httpd.auth_token = token       # type: ignore[attr-defined]
+    httpd.no_auth = no_auth        # type: ignore[attr-defined]
+    httpd.daemon_threads = True
+    visible = f"http://{host}:{port}"
+    if host == "0.0.0.0":
+        try:
+            local_ip = socket.gethostbyname(socket.gethostname())
+        except OSError:
+            local_ip = "<your-ip>"
+        visible = f"http://{local_ip}:{port}  (any LAN device)"
+    print(f"[dashboard] listening on {visible}")
+    if not no_auth:
+        print(f"[dashboard] bookmark from phone: {visible.split('  ')[0]}/?token={token}")
+    else:
+        print("[dashboard] WARNING: --no-auth is on; do NOT expose this beyond localhost")
+    print("[dashboard] Ctrl-C to stop")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[dashboard] shutting down")
+        httpd.shutdown()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-dashboard")
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="interface to bind (default 127.0.0.1; use 0.0.0.0 for LAN)")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--no-auth", action="store_true",
+                    help="disable bearer-token auth (only works with --host 127.0.0.1)")
+    args = ap.parse_args()
+
+    load_env()
+
+    if args.no_auth and args.host != "127.0.0.1":
+        print("[dashboard] --no-auth requires --host 127.0.0.1", file=sys.stderr)
+        return 2
+
+    token = os.environ.get("INVISIBLE_DASHBOARD_TOKEN", "")
+    if not args.no_auth and not token:
+        token = secrets.token_urlsafe(24)
+        print(f"[dashboard] generated INVISIBLE_DASHBOARD_TOKEN={token}")
+        print(f"            export this in {home()}/.env to persist across restarts")
+
+    serve(args.host, args.port, token, args.no_auth)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

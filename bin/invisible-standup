@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Daily standup: pull active projects + recent reviews from Notion,
+ask Claude to summarize, write today's plan back to Notion, print to stdout.
+
+Run manually each morning or schedule (cron/launchd). Designed to be the
+first thing you see in pane 5.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import markdown_vault  # noqa: E402
+import notion  # noqa: E402
+import telegram  # noqa: E402
+from config import home, load_env  # noqa: E402
+
+
+def extract_title(page: dict) -> str:
+    props = page.get("properties", {})
+    for v in props.values():
+        if v.get("type") == "title":
+            arr = v.get("title", [])
+            return "".join(t.get("plain_text", "") for t in arr) or "(untitled)"
+    return "(untitled)"
+
+
+def extract_prop(page: dict, key: str) -> str:
+    p = page.get("properties", {}).get(key, {})
+    t = p.get("type")
+    if t == "rich_text":
+        return "".join(x.get("plain_text", "") for x in p.get("rich_text", []))
+    if t == "select":
+        return (p.get("select") or {}).get("name", "")
+    if t == "number":
+        return str(p.get("number"))
+    if t == "date":
+        return (p.get("date") or {}).get("start", "")
+    return ""
+
+
+def build_context() -> tuple[str, list[dict]]:
+    projects = notion.query_active_projects()
+    reviews = notion.query_recent_reviews(hours=24)
+    gsd = notion.query_recent_gsd(hours=36)
+
+    lines = ["# Standup context\n", f"_Generated {dt.datetime.now().isoformat(timespec='seconds')}_\n"]
+    lines.append("## Active projects")
+    for p in projects:
+        lines.append(f"- {extract_title(p)}  (status: {extract_prop(p, 'Status')})")
+    lines.append("\n## Reviews in the last 24h")
+    for r in reviews[:30]:
+        title = extract_title(r)
+        agent = extract_prop(r, "Agent")
+        verdict = extract_prop(r, "Verdict")
+        summary = extract_prop(r, "Summary")
+        lines.append(f"- {title} — {agent}/{verdict} — {summary}")
+    if gsd:
+        lines.append("\n## GSD focus sessions (last ~36h)")
+        for g in gsd[:20]:
+            title = extract_title(g)
+            outcome = extract_prop(g, "Outcome")
+            duration = extract_prop(g, "Duration")
+            notes = extract_prop(g, "Notes")
+            dur_str = f"{duration}m" if duration else ""
+            tail = f" — {notes}" if notes else ""
+            lines.append(f"- {title} [{outcome}] {dur_str}{tail}")
+    return "\n".join(lines), projects
+
+
+def ask_claude(ctx: str) -> str:
+    prompt_path = home() / "prompts" / "standup.md"
+    system = prompt_path.read_text() if prompt_path.exists() else (
+        "You are a chief-of-staff. From the dump below, produce a concise "
+        "morning standup with sections: ## Yesterday, ## Today, ## Blockers, "
+        "## Per-client ranked focus. Be terse and actionable."
+    )
+    full = f"{system}\n\n---\n{ctx}"
+    try:
+        r = subprocess.run(
+            ["claude", "-p", full],
+            capture_output=True, text=True, timeout=300, check=False,
+        )
+        return r.stdout.strip() or "(claude returned no output)"
+    except FileNotFoundError:
+        return "[claude CLI not found — install Claude Code first]"
+    except subprocess.TimeoutExpired:
+        return "[claude standup summary timed out]"
+
+
+def parse_sections(md: str) -> dict[str, str]:
+    sections: dict[str, str] = {"Yesterday": "", "Today": "", "Blockers": ""}
+    current = None
+    for line in md.splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            head = s[3:].strip().split(":")[0].strip()
+            for key in sections:
+                if head.lower().startswith(key.lower()):
+                    current = key; break
+            else:
+                current = None
+        elif current:
+            sections[current] += line + "\n"
+    return {k: v.strip() for k, v in sections.items()}
+
+
+def main() -> int:
+    load_env()
+    ctx, projects = build_context()
+    print(ctx)
+    print("\n---\n")
+    summary = ask_claude(ctx)
+    print(summary)
+
+    parts = parse_sections(summary)
+    today = dt.date.today().isoformat()
+    project_ids = [p["id"] for p in projects]
+    notion.log_standup(
+        date_str=today,
+        yesterday=parts.get("Yesterday", "")[:1800],
+        today=parts.get("Today", "")[:1800],
+        blockers=parts.get("Blockers", "")[:1800],
+        project_ids=project_ids,
+    )
+
+    # Mirror to Logseq vault if configured. Use project NAMES (titles), not
+    # Notion IDs, so the wikilinks resolve to the project pages.
+    markdown_vault.writer().write_standup(
+        date_str=today,
+        yesterday=parts.get("Yesterday", ""),
+        today=parts.get("Today", ""),
+        blockers=parts.get("Blockers", ""),
+        project_names=[extract_title(p) for p in projects],
+    )
+
+    print(f"\n[invisible-standup] logged standup for {today}")
+    # Send the brief to Telegram so it pings your phone in the morning
+    today_section = parts.get("Today", "")
+    if today_section:
+        telegram.notify(f"☀️ standup {today}\n\n## Today\n{today_section[:2500]}",
+                        level="info", source="invisible-standup")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
