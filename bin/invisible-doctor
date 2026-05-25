@@ -176,24 +176,50 @@ def check_ssh(cfg: dict) -> tuple[str, str, str]:
 
 
 def check_codex_login() -> tuple[str, str, str]:
-    """Best-effort: codex --version proves the binary is functional."""
+    """Verify the codex CLI is actually authenticated.
+
+    Catches the 401-Unauthorized failure mode that surfaces only mid-run
+    otherwise (codex starts, reads the prompt, then dies on the OpenAI
+    websocket handshake). `codex login status` exits 0 when authenticated.
+    """
     if not shutil.which("codex"):
         return ("codex auth", FAIL, "binary missing")
-    r = subprocess.run(["codex", "--version"], capture_output=True,
+    r = subprocess.run(["codex", "login", "status"], capture_output=True,
                        text=True, timeout=10, check=False)
+    msg = (r.stdout + r.stderr).strip().splitlines()[0] if (r.stdout or r.stderr) else ""
     if r.returncode == 0:
-        return ("codex --version", PASS, r.stdout.strip() or "ok")
-    return ("codex --version", WARN, "binary present but version check failed")
+        return ("codex login", PASS, msg or "authenticated")
+    return ("codex login", FAIL,
+            f"{msg or 'not logged in'} — run `codex login`")
 
 
 def check_claude_login() -> tuple[str, str, str]:
+    """Verify the claude CLI is actually authenticated.
+
+    `claude auth status` returns a JSON envelope with loggedIn:true and exits
+    0 when authenticated. We parse it so the doctor surfaces the auth method
+    (claude.ai vs API key) rather than the raw JSON blob.
+    """
     if not shutil.which("claude"):
         return ("claude auth", FAIL, "binary missing")
-    r = subprocess.run(["claude", "--version"], capture_output=True,
+    r = subprocess.run(["claude", "auth", "status"], capture_output=True,
                        text=True, timeout=10, check=False)
-    if r.returncode == 0:
-        return ("claude --version", PASS, r.stdout.strip() or "ok")
-    return ("claude --version", WARN, "binary present but version check failed")
+    if r.returncode != 0:
+        snippet = (r.stderr or r.stdout).strip().splitlines()[0] if (r.stderr or r.stdout) else ""
+        return ("claude auth", FAIL,
+                f"{snippet or 'not logged in'} — run `claude auth login`")
+    try:
+        info = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return ("claude auth", WARN, "status returned non-JSON; assuming ok")
+    if not info.get("loggedIn"):
+        return ("claude auth", FAIL, "loggedIn=false — run `claude auth login`")
+    parts = [info.get("authMethod") or "unknown"]
+    if info.get("email"):
+        parts.append(info["email"])
+    if info.get("subscriptionType"):
+        parts.append(info["subscriptionType"])
+    return ("claude auth", PASS, " · ".join(parts))
 
 
 def main() -> int:
