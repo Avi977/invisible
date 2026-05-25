@@ -50,6 +50,11 @@ CC_RE = re.compile(
     r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]+)\))?(?P<bang>!)?:\s*(?P<subject>.+)$"
 )
 
+# Self-update commits ("docs: update CHANGELOG") are dropped so a push that
+# updates the changelog does not, in turn, force the next push to update it
+# again. Match exact subject case-insensitively.
+SELF_UPDATE_RE = re.compile(r"^docs:\s*update\s+changelog\.?$", re.IGNORECASE)
+
 
 def run(*args: str) -> str:
     return subprocess.check_output(args, cwd=ROOT, text=True).strip()
@@ -80,6 +85,8 @@ def git_log() -> list[dict]:
             if m:
                 tag = m.group(1)
                 break
+        if SELF_UPDATE_RE.match(subject):
+            continue
         commits.append({"sha": sha, "subject": subject, "date": date, "tag": tag})
     return commits
 
