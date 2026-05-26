@@ -20,6 +20,32 @@ working `invisible-doctor` in under 5 minutes.
 
 ---
 
+## Milestone M1 — Frontend wiring (6 parallel workstreams)
+
+The Claude Design React frontend landed 2026-05-26 with eight working pages
+running on mock data. Milestone M1 wires five of those pages to real backend
+data and migrates the desktop shell to Tauri. The work is split into **6
+parallel workstreams** under `.planning/workstreams/`, designed so six Claude
+sessions can ship them in parallel with one trivial merge:
+
+| WS | Owns | Wires |
+|----|------|-------|
+| `dashboard-wiring`     | `lib/api/projects.py`                   | Dashboard page → real projects |
+| `ai-bubble`            | `lib/api/chat.py`                       | AI bubble → `claude -p` proxy |
+| `folders-3source`      | `lib/api/tree_{local,vps,repo}.py`      | Folders → live 3-source trees |
+| `terminals-pty`        | `bin/invisible-pty`, `lib/pty_server.py`| Terminals → 6 real PTYs over WebSocket |
+| `analytics-aggregator` | `lib/api/analytics.py`                  | Analytics → real Notion review data |
+| `tauri-shell`          | `src-tauri/`, `frontend-vite/`          | Production Tauri shell + Vite bundle |
+
+The Tools / Relations / Calendar pages stay on mock data through M1 and
+are wired in M2.
+
+Run `gsd-sdk query workstream.list --raw --cwd .` from `~/.invisible` to
+see status. Each workstream has its own `ROADMAP.md` under
+`.planning/workstreams/<name>/`.
+
+---
+
 ## Phase 1 — Operational baseline
 
 Prove the existing scaffolding actually runs end-to-end.
@@ -52,14 +78,16 @@ human intervention; the desktop dashboard reflects VPS state in real time.
 
 ---
 
-## Phase 3 — Tauri shell migration
+## Phase 3 — Tauri shell + Vite (React)
 
 Replace the `pywebview + pystray` desktop wrapper (`bin/invisible-app`) with
-a **Tauri** application. Tauri gives us a small native binary (~10 MB), a
-Rust core, and a web frontend we can iterate on quickly.
+a **Tauri** application loading a **Vite-bundled React 18** frontend. Tauri
+gives us a small native binary (~10 MB), a Rust core, and `frontend/` has
+already been seeded by the Claude Design handoff — Phase 3 just productionises
+it.
 
+- [ ] `frontend-vite/` — port `frontend/*.jsx` (Babel-standalone) to Vite + React 18
 - [ ] Scaffold `src-tauri/` with `cargo tauri init`
-- [ ] React or Svelte frontend (TBD; lean toward Svelte for size)
 - [ ] Tauri commands that wrap the existing CLI:
       `run_orchestrator`, `kill_run`, `list_projects`, `tail_log`, `status`
 - [ ] System tray with Open / Hide / Quit (parity with pystray today)
@@ -69,6 +97,8 @@ Rust core, and a web frontend we can iterate on quickly.
 **Exit criteria:** Tauri app launches, shows the dashboard, and can start /
 stop / observe an orchestration loop on Mac. `bin/invisible-app` is then
 marked deprecated.
+
+> Phase 3 ships as workstream **`tauri-shell`** in `.planning/workstreams/`.
 
 ---
 
