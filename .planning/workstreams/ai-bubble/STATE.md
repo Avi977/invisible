@@ -1,36 +1,47 @@
 ---
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: None
-current_plan: N/A
-status: executing
-stopped_at: N/A
-last_updated: "2026-05-26T21:53:44.682Z"
-last_activity: 2026-05-26
-progress:
-  total_phases: 1
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+workstream: ai-bubble
+created: 2026-05-26
+last_updated: 2026-05-26
 ---
 
 # Project State
 
 ## Current Position
-
-**Status:** Ready to execute
-**Current Phase:** None
+**Status:** Phase 01 in progress — Plan 01 complete; Plan 02 (frontend wiring) next
+**Current Phase:** 01-api-v1-chat-end-to-end
 **Last Activity:** 2026-05-26
-**Last Activity Description:** Phase 1 planning complete — 2 plans ready
+**Last Activity Description:** Plan 01-01 complete — POST /api/v1/chat backend proxy shipped (commits ac39358, 4fbc0e8, bc58eed)
 
 ## Progress
+**Phases Complete:** 0 (of 1)
+**Plans Complete:** 1 (of 2 in phase 01)
+**Current Plan:** 02 — wire frontend/ai-chat.jsx to /api/v1/chat
 
-**Phases Complete:** 0
-**Current Plan:** N/A
+Progress: [█████░░░░░] 50%
+
+## Performance Metrics
+
+| Plan  | Tasks | Duration | Tests | Status      |
+| ----- | ----- | -------- | ----- | ----------- |
+| 01-01 | 2     | 230s     | 15    | ✓ COMPLETE  |
+
+## Accumulated Context
+
+### Decisions
+
+- **Stateless backend** — page-session conversation history lives in frontend (per REQ-02 scope). Backend is restart-safe.
+- **60s timeout** — shorter than runners.py's 600s review timeout because chat is interactive.
+- **Standalone chat module** — `lib/api/chat.py` does NOT import from `lib/runners.py`. Keeps it unit-testable without the orchestrator graph.
+- **Argv-only invocation, STDIN-fed prompt** — anti-injection: user-supplied `message`/`page_context`/`project_id` never enter argv.
+
+### Pending Todos
+
+- Plan 02: wire frontend/ai-chat.jsx to POST /api/v1/chat (replace canned response in `handleSend`); mirror MAX_MESSAGE_CHARS=8000 and 60s timeout in the frontend.
+
+### Blockers/Concerns
+
+- Daemon startup logs an Infisical 403 from `vault.theprofitplatform.com.au` (`load_env()` path). Non-blocking for the chat proxy (no secrets needed) — flag for the broader project but do not gate this workstream on it.
 
 ## Session Continuity
-
-**Stopped At:** N/A
-**Resume File:** None
+**Stopped At:** Plan 01-01 complete
+**Resume File:** `.planning/workstreams/ai-bubble/phases/INV-01-api-v1-chat-end-to-end/01-02-PLAN.md` (frontend wiring)
