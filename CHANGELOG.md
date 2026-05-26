@@ -15,6 +15,7 @@ overwritten on the next push.
 
 ### Features
 
+- **frontend:** drop Claude Design React UI as invisible-frontend (dc4106b)
 - **doctor:** verify codex+claude auth state, not just binary presence (98bd40e)
 
 ### Bug Fixes
