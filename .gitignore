@@ -35,6 +35,11 @@ checkpoints/
 .invisible-checkpoint.json
 .invisible-state/
 
+# ── GSD per-worktree state ─────────────────────────────────────────────
+# Active workstream is per-worktree, not shared. Each git worktree picks
+# its own via `gsd-sdk query workstream.set <name>`.
+.planning/active-workstream
+
 # ── OS / editor ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
