@@ -31,8 +31,9 @@ same code runs identically on every machine.
 **Surfaces.**
 - `invisible` — 6-pane tmux cockpit (logs, orchestrator, ssh, dashboard, GSD, watch)
 - `invisible-app` — native desktop wrapper (currently pywebview + pystray; migrating to Tauri)
-- `invisible-dashboard` — local HTML dashboard on `127.0.0.1:8765`
-- `invisible-server` — VPS-side daemon serving the same dashboard remotely
+- `invisible-frontend` — React UI on `127.0.0.1:8090` (Dashboard, Focus, Folders, Relations, Terminals, Tools, Calendar, Analytics + AI bubble + Tweaks). Source in `frontend/`, dropped from Claude Design 2026-05-26.
+- `invisible-dashboard` — server-rendered HTML + JSON API on `127.0.0.1:8765` (the React frontend's data backend)
+- `invisible-server` — VPS-side daemon mirroring the dashboard remotely
 
 ---
 

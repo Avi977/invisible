@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""invisible-frontend — serve the React design from frontend/ over HTTP.
+
+This is the new UI shell brought in from the Claude Design handoff. It's a
+static React app (Babel standalone, no build step) that imports JSX directly.
+The dashboard at /api/* is served separately by invisible-dashboard — those
+two daemons coexist on different ports and the frontend fetches data via the
+dashboard's API endpoints.
+
+Usage:
+    invisible-frontend                  # 127.0.0.1:8090
+    invisible-frontend --port 9000      # custom port
+    invisible-frontend --host 0.0.0.0   # bind to LAN (dangerous w/o auth)
+
+Failure modes:
+    - port already in use   → exits with a clear error
+    - frontend/ missing     → exits with a clear error
+"""
+
+from __future__ import annotations
+
+import argparse
+import http.server
+import os
+import socketserver
+import sys
+from pathlib import Path
+
+DEFAULT_PORT = 8090
+DEFAULT_HOST = "127.0.0.1"
+
+
+def home() -> Path:
+    return Path(os.path.expanduser(os.environ.get("INVISIBLE_HOME", "~/.invisible")))
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    # Keep the access log quiet by default — uncomment for debugging.
+    def log_message(self, format, *args):  # noqa: A002, ARG002
+        return
+
+    def end_headers(self):
+        # No cache: this is a dev surface and Babel-compiled JSX changes mean
+        # the user wants a hard refresh to always pick up the latest source.
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        # Permissive CORS so the React app can fetch from the dashboard daemon
+        # on a different port (127.0.0.1:8765) without preflight headaches.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="invisible-frontend")
+    ap.add_argument("--host", default=DEFAULT_HOST,
+                    help=f"interface to bind (default {DEFAULT_HOST})")
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT,
+                    help=f"port (default {DEFAULT_PORT})")
+    args = ap.parse_args()
+
+    frontend = home() / "frontend"
+    if not frontend.exists() or not (frontend / "index.html").exists():
+        print(f"[invisible-frontend] {frontend}/index.html missing", file=sys.stderr)
+        return 2
+
+    os.chdir(frontend)
+
+    try:
+        with socketserver.TCPServer((args.host, args.port), Handler) as httpd:
+            httpd.allow_reuse_address = True
+            url = f"http://{args.host}:{args.port}/"
+            print(f"[invisible-frontend] serving {frontend} at {url}", flush=True)
+            httpd.serve_forever()
+    except OSError as e:
+        print(f"[invisible-frontend] bind {args.host}:{args.port} failed: {e}",
+              file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[invisible-frontend] stopped", flush=True)
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
