@@ -90,6 +90,25 @@ MAX_CONCURRENT_PTYS: int = 32
 # Shell to launch inside each PTY. Mirrors the user's interactive shell.
 DEFAULT_SHELL: str = os.environ.get("SHELL", "/bin/bash")
 
+# ────────────────────────────────────────────────────────────────────────
+# Plan 02 — session-persistence constants.
+# ────────────────────────────────────────────────────────────────────────
+
+# Grace window after a WebSocket disconnect before the reaper terminates the
+# parked PtyProcess. Long enough to survive a full page reload + AI-chat
+# detour, short enough that orphaned bash shells eventually go away if the
+# user closes the browser tab entirely. CLI `--reconnect-grace` overrides.
+RECONNECT_GRACE_SECONDS: int = 600
+
+# Per-pane bounded ring buffer of recent PTY output. When a client reconnects
+# inside the grace window, we replay this buffer immediately before resuming
+# the live stream. 8 KiB ≈ one screenful of typical shell output.
+BACKLOG_BYTES: int = 8 * 1024
+
+# How often the reaper sweeps the registry for expired panes. The window is
+# coarse on purpose — the reaper is a janitor, not a deadline.
+REAPER_INTERVAL_SECONDS: int = 30
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Validators — pure functions, no side effects, easy to unit-assert.
@@ -177,36 +196,193 @@ def spawn_pty(
 class PTYRegistry:
     """In-memory pane-id ⇒ live PTY bookkeeping.
 
-    Plan 01 scope: register / get / count / unregister. Plan 02 will extend
-    this with a reconnect-grace timer + reap loop (see `# TODO(plan-02)`
-    markers in handle_pty).
+    Plan 02 extended scope:
+      - register / get / count / unregister  (Plan 01 surface, preserved)
+      - attach_ws / detach_ws                (Plan 02: reconnect semantics)
+      - record_output / get_backlog          (Plan 02: backlog ring buffer)
+      - sweep                                (Plan 02: reaper helper)
+
+    Entry shape per pane:
+        {
+            "proc":            PtyProcess,
+            "created_at":      datetime (UTC),
+            "ws":              websocket | None,
+            "disconnected_at": datetime (UTC) | None,
+            "backlog":         bytearray (≤ BACKLOG_BYTES, drops from front),
+        }
+
+    Backlog is a `bytearray` rather than a `deque` of chunks because (a) we
+    only need byte-granular trimming, (b) the read side is "send the whole
+    buffer in one frame on reconnect", and (c) `del backlog[:n]` is O(n) but
+    only fires when the buffer is full — amortised over the stream this is
+    cheaper than reconciling chunk boundaries.
     """
 
     def __init__(self) -> None:
         self._panes: dict[str, dict[str, Any]] = {}
 
+    # ------------------------------------------------------------------
+    # Plan 01 surface — preserved verbatim.
+    # ------------------------------------------------------------------
+
     def register(self, pane_id: str, proc: PtyProcess) -> None:
         """Add (or replace) a pane.
 
-        Plan 01 behavior: re-registering an existing pane silently replaces
-        the old entry — the caller (handle_pty) is responsible for
-        terminating the old PtyProcess first. Plan 02 changes this to
-        "reattach to existing pane".
+        Plan 02 behavior: every fresh registration starts with `ws=None`,
+        `disconnected_at=None`, and an empty `backlog`. The caller follows
+        up with `attach_ws(pane_id, websocket)` so reconnect bookkeeping is
+        symmetrical with `detach_ws`. The old Plan 01 "last-writer-wins"
+        teardown moved into `handle_pty`; the registry no longer assumes the
+        caller terminated any prior PtyProcess.
         """
         self._panes[pane_id] = {
             "proc": proc,
             "created_at": datetime.now(timezone.utc),
-            "ws": None,  # Plan 02 will populate this for reconnect routing.
+            "ws": None,
+            "disconnected_at": None,
+            "backlog": bytearray(),
         }
 
     def get(self, pane_id: str) -> dict[str, Any] | None:
         return self._panes.get(pane_id)
 
     def count(self) -> int:
+        """Number of LIVE panes — orphaned (ws is None) entries that are
+        awaiting reap still count, by design. The MAX_CONCURRENT_PTYS cap
+        is about how many PtyProcesses exist in memory, not how many have
+        a websocket attached. The reaper is what actually shrinks this
+        number once a grace window lapses.
+        """
         return len(self._panes)
 
     def unregister(self, pane_id: str) -> None:
         self._panes.pop(pane_id, None)
+
+    # ------------------------------------------------------------------
+    # Plan 02 — reconnect, backlog, reaper.
+    # ------------------------------------------------------------------
+
+    def attach_ws(self, pane_id: str, ws: Any) -> bool:
+        """Bind `ws` to an existing pane entry.
+
+        Returns:
+          True  if an existing entry was found and the websocket was attached
+                (reconnect path — caller should replay backlog then reuse the
+                entry's PtyProcess).
+          False if no entry exists for `pane_id` (caller must spawn a fresh
+                PTY and call `register`).
+
+        Takeover semantics:
+          If the entry already has a live `ws` (some other client is currently
+          attached), the prior websocket is forcibly closed (best-effort) and
+          replaced. A warning is logged to stderr. This is the "two browser
+          tabs racing for the same pane id" edge case — last-writer-wins on
+          the websocket, but the PtyProcess survives both transitions.
+        """
+        entry = self._panes.get(pane_id)
+        if entry is None:
+            return False
+
+        prior = entry.get("ws")
+        if prior is not None and prior is not ws:
+            print(
+                f"[invisible-pty] takeover: closing prior ws on pane {pane_id!r}",
+                file=sys.stderr,
+            )
+            try:
+                # `close` may be a coroutine on real WS connections; we
+                # cannot await here (the registry is sync). Fire-and-forget
+                # by scheduling on the running loop if one exists. If not
+                # (unit-test context), drop silently — the entry is being
+                # replaced anyway.
+                close_attr = getattr(prior, "close", None)
+                if close_attr is not None:
+                    result = close_attr()
+                    if asyncio.iscoroutine(result):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(result)
+                        except RuntimeError:
+                            # No running loop — coroutine will be GC'd; OK
+                            # because we already replaced the ws reference.
+                            result.close()
+            except Exception:  # noqa: BLE001 — takeover is best-effort
+                pass
+
+        entry["ws"] = ws
+        entry["disconnected_at"] = None
+        return True
+
+    def detach_ws(self, pane_id: str) -> None:
+        """Mark a pane as orphaned (websocket gone, PtyProcess still alive).
+
+        Sets `ws=None` and stamps `disconnected_at=utcnow()` — the reaper
+        will pick this entry up once `(now - disconnected_at) > grace`.
+        Does NOT terminate the PtyProcess; that's the reaper's job.
+        """
+        entry = self._panes.get(pane_id)
+        if entry is None:
+            return
+        entry["ws"] = None
+        entry["disconnected_at"] = datetime.now(timezone.utc)
+
+    def record_output(self, pane_id: str, chunk: bytes) -> None:
+        """Append a chunk to the pane's backlog ring, trimming from the
+        front if the buffer exceeds BACKLOG_BYTES.
+
+        Called from the pty_to_ws pump in `handle_pty` on every read, so
+        the backlog stays current for any in-flight reconnect. Cheap on
+        the steady-state path — the trim branch only fires when the buffer
+        actually overflows.
+        """
+        entry = self._panes.get(pane_id)
+        if entry is None:
+            return
+        if not chunk:
+            return
+        backlog: bytearray = entry["backlog"]
+        backlog.extend(chunk)
+        overflow = len(backlog) - BACKLOG_BYTES
+        if overflow > 0:
+            # Drop the oldest `overflow` bytes from the front. `del`
+            # on bytearray slice is in-place; no extra allocation.
+            del backlog[:overflow]
+
+    def get_backlog(self, pane_id: str) -> bytes:
+        """Snapshot the current backlog as immutable bytes.
+
+        Returned as `bytes` (not a view) so the caller can `await ws.send`
+        without worrying about concurrent mutation from the pump.
+        """
+        entry = self._panes.get(pane_id)
+        if entry is None:
+            return b""
+        return bytes(entry["backlog"])
+
+    def sweep(self, now: datetime, grace_seconds: int) -> list[str]:
+        """Return pane_ids whose grace window has lapsed.
+
+        A pane is eligible for reap iff:
+          - `ws is None` (no client currently attached), AND
+          - `disconnected_at is not None`, AND
+          - `(now - disconnected_at).total_seconds() > grace_seconds`.
+
+        The caller terminates the PtyProcess and unregisters each returned
+        id. Sweep is a pure observation function — it does not mutate the
+        registry, so it's safe to call concurrently with `attach_ws` /
+        `detach_ws` from the asyncio event loop.
+        """
+        expired: list[str] = []
+        for pane_id, entry in self._panes.items():
+            if entry.get("ws") is not None:
+                continue
+            disconnected_at = entry.get("disconnected_at")
+            if disconnected_at is None:
+                continue
+            elapsed = (now - disconnected_at).total_seconds()
+            if elapsed > grace_seconds:
+                expired.append(pane_id)
+        return expired
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -298,6 +474,7 @@ class PTYServer:
         host: str = "127.0.0.1",
         port: int = 8091,
         pane_configs: dict[str, dict[str, Any]] | None = None,
+        reconnect_grace: int = RECONNECT_GRACE_SECONDS,
     ) -> None:
         # Defence in depth — even if the CLI forgot to call validate_host,
         # we refuse to construct a server bound to a non-loopback host.
@@ -306,6 +483,12 @@ class PTYServer:
         self.port = port
         self.registry = PTYRegistry()
         self.pane_configs: dict[str, dict[str, Any]] = pane_configs or {}
+        # Plan 02: grace window applied by the reaper coroutine. Bumped by
+        # the CLI `--reconnect-grace` flag. Stored on self so handle_pty
+        # and _reap_loop both read the same value.
+        self.reconnect_grace: int = int(reconnect_grace)
+        # Reaper task handle — created in serve_async, cancelled on shutdown.
+        self._reaper_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # HTTP side-channel + origin gate.
@@ -395,11 +578,20 @@ class PTYServer:
     # ------------------------------------------------------------------
 
     async def handle_pty(self, websocket: Any) -> None:
-        """One WS connection ⇒ one PTY. Spawns the shell, pumps bytes in
-        both directions, terminates the shell on disconnect.
+        """One WS connection ⇒ one PTY. Reconnect-aware.
 
-        Plan 01 semantics: every disconnect kills the PTY. Plan 02 replaces
-        this with a reconnect-grace timer + reattach.
+        Plan 02 semantics:
+          - If a pane entry exists in the registry: attach the new
+            websocket, replay the backlog, and reuse the existing
+            PtyProcess. This is the reconnect path.
+          - Otherwise: enforce the cap, resolve the pane config, spawn a
+            fresh PtyProcess, register it. This is the fresh path.
+          - On either pump terminating:
+              * if the PTY died (EOF from proc.read): unregister and close
+                the websocket — there's nothing left to reconnect to.
+              * if the websocket died (ConnectionClosed) but the PTY is
+                still alive: call `detach_ws`, leave the entry parked for
+                the reaper, and exit the handler WITHOUT killing the proc.
         """
         # `path` extraction. websockets v16 exposes it via `request` attribute
         # on the ServerConnection (set during handshake). We snapshot it here
@@ -423,62 +615,80 @@ class PTYServer:
             await websocket.close(code=1008, reason="bad pane id")
             return
 
-        # Cap check — T-01-04.
-        if self.registry.count() >= MAX_CONCURRENT_PTYS:
-            # 1013 = Try Again Later, the right close code for capacity.
-            await websocket.close(code=1013, reason="pty cap reached")
-            return
+        # Reconnect vs fresh-spawn fork.
+        attached = self.registry.attach_ws(pane_id, websocket)
+        if attached:
+            # Reconnect path — reuse the parked PtyProcess and replay the
+            # backlog. Cap check is intentionally skipped here: the pane
+            # already counts toward the cap from its fresh-spawn epoch.
+            entry = self.registry.get(pane_id)
+            assert entry is not None  # attach_ws returned True
+            proc = entry["proc"]
+            # Replay backlog as a single frame. Decode best-effort — partial
+            # UTF-8 at the buffer boundary should not crash the reconnect.
+            backlog = self.registry.get_backlog(pane_id)
+            if backlog:
+                try:
+                    await websocket.send(backlog.decode("utf-8", errors="replace"))
+                except ConnectionClosed:
+                    # Client died mid-replay; detach and bail. Reaper will
+                    # take care of the parked proc.
+                    self.registry.detach_ws(pane_id)
+                    return
+        else:
+            # Fresh-spawn path.
+            # Cap check — T-01-04. We count live PtyProcesses including
+            # parked ones (orphans waiting for reap), which is the correct
+            # semantic for "how much memory is the daemon holding". The
+            # reaper is what actually shrinks this number.
+            if self.registry.count() >= MAX_CONCURRENT_PTYS:
+                # 1013 = Try Again Later, the right close code for capacity.
+                await websocket.close(code=1013, reason="pty cap reached")
+                return
 
-        # If a pane with this id already exists, kill it first (Plan 01:
-        # last-writer-wins). Plan 02 changes this to "reattach to existing".
-        # TODO(plan-02): replace this teardown with reattach-and-resume.
-        existing = self.registry.get(pane_id)
-        if existing is not None:
+            # Per-pane config. Task 2 swaps this for `spawn_pty_for_config`;
+            # for the Task 1 unit-test we still need to round-trip through
+            # the same dict shape.
+            cfg = self.pane_configs.get(pane_id, {})
             try:
-                existing["proc"].terminate(force=True)
-            except Exception:  # noqa: BLE001 — best-effort cleanup
-                pass
-            self.registry.unregister(pane_id)
+                proc = self._spawn_for_pane(pane_id, cfg)
+            except (OSError, RuntimeError) as e:
+                await websocket.close(code=1011, reason=f"spawn failed: {e}")
+                return
 
-        # Per-pane config (Plan 01 default: empty ⇒ plain bash in home dir).
-        cfg = self.pane_configs.get(pane_id, {})
-        # TODO(plan-02): SSH-variant — when cfg["ssh"] is set, spawn `ssh host`
-        # instead of a local bash. Plan 02 owns this branch.
-        try:
-            proc = spawn_pty(
-                pane_id,
-                cwd=cfg.get("cwd"),
-                env=cfg.get("env"),
-                command=cfg.get("command"),
-            )
-        except (OSError, RuntimeError) as e:
-            await websocket.close(code=1011, reason=f"spawn failed: {e}")
-            return
-
-        self.registry.register(pane_id, proc)
+            self.registry.register(pane_id, proc)
+            # Symmetric bookkeeping: after register, immediately attach
+            # the websocket so the entry is in the "live" state.
+            self.registry.attach_ws(pane_id, websocket)
 
         loop = asyncio.get_running_loop()
+        # Track whether the PTY itself died vs the websocket. Decides the
+        # finally branch — kill-and-unregister vs detach-and-park.
+        pty_dead = False
 
         async def pty_to_ws() -> None:
-            """Drain PTY stdout/stderr → forward to WS as text frames.
-
-            `proc.read` is blocking; run it in the default executor so the
-            asyncio loop stays responsive. Decode with errors="replace" so
-            partial-UTF8 reads don't kill the loop.
+            """Drain PTY stdout/stderr → forward to WS as text frames,
+            recording every chunk into the registry's backlog ring.
             """
+            nonlocal pty_dead
             while True:
                 try:
                     chunk = await loop.run_in_executor(None, proc.read, 1024)
                 except (EOFError, OSError, ptyprocess.PtyProcessError):
+                    pty_dead = True
                     return
                 if not chunk:
+                    pty_dead = True
                     return
                 if isinstance(chunk, bytes):
-                    text = chunk.decode("utf-8", errors="replace")
+                    raw = chunk
                 else:
-                    text = chunk
+                    raw = chunk.encode("utf-8", errors="replace")
+                # Record into backlog before sending — keeps the buffer
+                # fresh even if the ws send raises mid-flight.
+                self.registry.record_output(pane_id, raw)
                 try:
-                    await websocket.send(text)
+                    await websocket.send(raw.decode("utf-8", errors="replace"))
                 except ConnectionClosed:
                     return
 
@@ -496,28 +706,103 @@ class PTYServer:
                     try:
                         proc.write(data)
                     except (OSError, ptyprocess.PtyProcessError):
+                        pty_dead_local = True  # noqa: F841 — narrative only
                         return
             except ConnectionClosed:
                 return
 
-        # Race the two pumps. When either ends, tear the whole pane down.
+        # Race the two pumps. When either ends, decide whether to park or
+        # reap the pane (see comment block at the top of handle_pty).
         try:
             await asyncio.wait(
                 {asyncio.create_task(pty_to_ws()), asyncio.create_task(ws_to_pty())},
                 return_when=asyncio.FIRST_COMPLETED,
             )
         finally:
-            # Plan 01 teardown: kill PTY, unregister, close WS.
-            # TODO(plan-02): swap this for "schedule reap after grace period".
-            try:
-                proc.terminate(force=True)
-            except Exception:  # noqa: BLE001
-                pass
-            self.registry.unregister(pane_id)
-            try:
-                await websocket.close()
-            except Exception:  # noqa: BLE001
-                pass
+            if pty_dead:
+                # PTY exited (user typed `exit` or the shell died). No
+                # session to reconnect to; clean up immediately.
+                try:
+                    proc.terminate(force=True)
+                except Exception:  # noqa: BLE001
+                    pass
+                self.registry.unregister(pane_id)
+                try:
+                    await websocket.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                # Websocket gone, but the PtyProcess is still alive. Park
+                # it for the reaper. The reaper will terminate the proc
+                # iff no client reattaches within `self.reconnect_grace`.
+                self.registry.detach_ws(pane_id)
+                try:
+                    await websocket.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    # ------------------------------------------------------------------
+    # Internal: per-pane spawn dispatcher (Plan 02 hook).
+    # ------------------------------------------------------------------
+
+    def _spawn_for_pane(self, pane_id: str, cfg: dict[str, Any]) -> PtyProcess:
+        """Spawn a PtyProcess for `pane_id` using `cfg` (from pane_configs).
+
+        Plan 01 default behavior preserved when `cfg` is empty: plain bash
+        in the user's home with inherited env. Task 2 swaps the body of
+        this method for a call into `spawn_pty_for_config`; Task 1 keeps
+        the surface minimal so the Plan 01 contract still holds for any
+        caller that passes a bare dict.
+        """
+        return spawn_pty(
+            pane_id,
+            cwd=cfg.get("cwd"),
+            env=cfg.get("env"),
+            command=cfg.get("command"),
+        )
+
+    # ------------------------------------------------------------------
+    # Reaper.
+    # ------------------------------------------------------------------
+
+    async def _reap_loop(self) -> None:
+        """Background coroutine that sweeps the registry every
+        `REAPER_INTERVAL_SECONDS` and terminates panes whose grace window
+        has lapsed.
+
+        Exits on `asyncio.CancelledError`, which `serve_async` raises on
+        shutdown. Any other exception is logged but does NOT take down
+        the daemon — the reaper is a janitor, not a critical path.
+        """
+        try:
+            while True:
+                await asyncio.sleep(REAPER_INTERVAL_SECONDS)
+                now = datetime.now(timezone.utc)
+                expired = self.registry.sweep(now, self.reconnect_grace)
+                for pane_id in expired:
+                    entry = self.registry.get(pane_id)
+                    if entry is None:
+                        continue
+                    proc = entry.get("proc")
+                    if proc is not None:
+                        try:
+                            proc.terminate(force=True)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    self.registry.unregister(pane_id)
+                    print(
+                        f"[invisible-pty] reaped {pane_id} after "
+                        f"{self.reconnect_grace}s idle",
+                        file=sys.stderr,
+                    )
+        except asyncio.CancelledError:
+            # Normal shutdown path.
+            raise
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"[invisible-pty] reaper crashed: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle.
@@ -532,17 +817,41 @@ class PTYServer:
         natively supports an `origins=` list — we pass it as defence in
         depth, but the explicit check in `_process_request` is what the
         threat model actually relies on.
+
+        Plan 02: also launches the reaper coroutine before binding the
+        socket, and cancels it on shutdown. The daemon's in-memory PTY
+        state is intentionally non-durable — restarting the daemon clears
+        every registered pane. Persistence only spans the lifetime of a
+        single daemon process.
         """
-        async with ws_serve(
-            self.handle_pty,
-            self.host,
-            self.port,
-            process_request=self._process_request,
-            origins=list(ALLOWED_ORIGINS),
-        ) as server:
-            print(f"[invisible-pty] listening on ws://{self.host}:{self.port}")
-            print("[invisible-pty] Ctrl-C to stop")
-            await server.serve_forever()
+        # Plan 02: start the reaper before accepting connections so even
+        # the very first orphaned pane gets swept on schedule.
+        self._reaper_task = asyncio.create_task(self._reap_loop())
+        try:
+            async with ws_serve(
+                self.handle_pty,
+                self.host,
+                self.port,
+                process_request=self._process_request,
+                origins=list(ALLOWED_ORIGINS),
+            ) as server:
+                print(f"[invisible-pty] listening on ws://{self.host}:{self.port}")
+                print(
+                    f"[invisible-pty] reconnect grace = {self.reconnect_grace}s; "
+                    f"backlog = {BACKLOG_BYTES} bytes; "
+                    f"reaper every {REAPER_INTERVAL_SECONDS}s"
+                )
+                print("[invisible-pty] Ctrl-C to stop")
+                await server.serve_forever()
+        finally:
+            # Shutdown — cancel the reaper and swallow the CancelledError.
+            if self._reaper_task is not None:
+                self._reaper_task.cancel()
+                try:
+                    await self._reaper_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+                self._reaper_task = None
 
     def serve(self) -> None:
         """Sync entrypoint. Wraps asyncio.run + a polite KeyboardInterrupt log.
