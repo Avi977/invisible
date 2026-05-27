@@ -51,6 +51,7 @@ import json
 import os
 import re
 import sys
+import tomllib
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -152,6 +153,188 @@ def check_origin(origin: str | None) -> bool:
 
 
 # ────────────────────────────────────────────────────────────────────────
+# Pane config loader (Plan 02) — reads `[[terminals]]` from invisible.toml.
+# ────────────────────────────────────────────────────────────────────────
+
+
+# Per-pane env values must be strings — TOML naturally produces strings for
+# string-typed scalars, but a user could write `FOO = 42` and we'd refuse.
+_ALLOWED_KINDS: set[str] = {"bash", "ssh"}
+
+
+def load_pane_configs(path: Path | str) -> dict[str, dict[str, Any]]:
+    """Read `[[terminals]]` blocks from an invisible.toml file.
+
+    Returns a `{pane_id: config_dict}` map. Each config_dict is a sanitised
+    copy of the TOML entry minus the redundant `id` key (the dict key IS the
+    pane id). Missing/malformed file ⇒ empty dict, not an exception — the
+    daemon still runs with all-default plain-bash panes.
+
+    Validation per entry (any failure ⇒ entry dropped + stderr warning):
+      - `id`     required, string, matches PANE_ID_RE
+      - `kind`   required, must be in {"bash", "ssh"}
+      - `host`   required iff kind=="ssh"; must be a string. NEVER comes
+                 from the URL — this loader is the single trusted source.
+      - `cwd`    optional string; `~` is `os.path.expanduser`'d by the
+                 spawn helper (not here — defer until use).
+      - `env`    optional table; every value must be a string.
+      - `command` optional list-of-strings; only meaningful for kind=="bash"
+                 (ignored for kind=="ssh"; the argv is locked to
+                 `["ssh", host]` to keep T-02-01 closed).
+
+    Threat-model note (T-02-01): this loader is the boundary between the
+    user-controlled TOML file and the trusted runtime. Any field that
+    contributes to the spawned argv (host, command) is validated for
+    type+shape; the URL never reaches `resolve_command`.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        with p.open("rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        print(
+            f"[invisible-pty] failed to load {p}: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+        return {}
+
+    terminals = raw.get("terminals")
+    if not isinstance(terminals, list):
+        return {}
+
+    configs: dict[str, dict[str, Any]] = {}
+    for i, entry in enumerate(terminals):
+        # The fail-soft pattern: every reject prints why and which entry
+        # so the user can fix the TOML and `kill -HUP` (or restart).
+        if not isinstance(entry, dict):
+            print(
+                f"[invisible-pty] config entry #{i}: not a table; skipped",
+                file=sys.stderr,
+            )
+            continue
+
+        pane_id = entry.get("id")
+        if not isinstance(pane_id, str) or not validate_pane_id(pane_id):
+            print(
+                f"[invisible-pty] config entry #{i}: invalid id "
+                f"{pane_id!r} (must match {PANE_ID_RE.pattern}); skipped",
+                file=sys.stderr,
+            )
+            continue
+
+        kind = entry.get("kind")
+        if kind not in _ALLOWED_KINDS:
+            print(
+                f"[invisible-pty] config entry {pane_id!r}: invalid kind "
+                f"{kind!r} (must be one of {sorted(_ALLOWED_KINDS)}); skipped",
+                file=sys.stderr,
+            )
+            continue
+
+        cfg: dict[str, Any] = {"kind": kind}
+
+        if kind == "ssh":
+            host = entry.get("host")
+            if not isinstance(host, str) or not host.strip():
+                print(
+                    f"[invisible-pty] config entry {pane_id!r}: kind=ssh "
+                    "requires a non-empty string `host`; skipped",
+                    file=sys.stderr,
+                )
+                continue
+            cfg["host"] = host
+
+        cwd = entry.get("cwd")
+        if cwd is not None:
+            if not isinstance(cwd, str):
+                print(
+                    f"[invisible-pty] config entry {pane_id!r}: cwd must be "
+                    "a string; ignored",
+                    file=sys.stderr,
+                )
+            else:
+                cfg["cwd"] = cwd
+
+        env_t = entry.get("env")
+        if env_t is not None:
+            if not isinstance(env_t, dict):
+                print(
+                    f"[invisible-pty] config entry {pane_id!r}: env must be a "
+                    "table; ignored",
+                    file=sys.stderr,
+                )
+            else:
+                # T-02-04: values must be strings. Drop the whole env table
+                # if any value is non-string — partial overlay is too easy
+                # to misread on first inspection of the running daemon.
+                bad = [k for k, v in env_t.items() if not isinstance(v, str)]
+                if bad:
+                    print(
+                        f"[invisible-pty] config entry {pane_id!r}: env keys "
+                        f"{bad!r} have non-string values; env table ignored",
+                        file=sys.stderr,
+                    )
+                else:
+                    cfg["env"] = dict(env_t)
+
+        command = entry.get("command")
+        if command is not None:
+            if kind == "ssh":
+                # SSH kind has a fixed argv. Allowing override here would
+                # reopen T-02-01.
+                print(
+                    f"[invisible-pty] config entry {pane_id!r}: command is "
+                    "ignored for kind=ssh (argv is locked)",
+                    file=sys.stderr,
+                )
+            elif (
+                not isinstance(command, list)
+                or not all(isinstance(s, str) for s in command)
+                or not command
+            ):
+                print(
+                    f"[invisible-pty] config entry {pane_id!r}: command must "
+                    "be a non-empty list of strings; ignored",
+                    file=sys.stderr,
+                )
+            else:
+                cfg["command"] = list(command)
+
+        configs[pane_id] = cfg
+
+    return configs
+
+
+def resolve_command(config: dict[str, Any]) -> list[str]:
+    """Return the argv to spawn for `config`.
+
+    bash: `config['command']` if present and well-formed, else
+          `[DEFAULT_SHELL, "-i"]`.
+    ssh:  `["ssh", config['host']]`. Hardcoded — the path id is only a
+          lookup key, never interpolated into argv. (T-02-01)
+
+    Defensive default for unknown kinds (shouldn't happen because
+    `load_pane_configs` validates): fall back to bash. This keeps any caller
+    that hands in a hand-built dict (e.g., a unit test) from raising.
+    """
+    kind = config.get("kind", "bash")
+    if kind == "ssh":
+        host = config.get("host")
+        if not isinstance(host, str) or not host.strip():
+            # Should be unreachable for configs that came from load_pane_configs,
+            # but defend in depth — refuse to construct a bare `["ssh"]` argv.
+            raise ValueError("ssh config missing host (loader should have rejected)")
+        return ["ssh", host]
+    # bash (and anything unknown — see docstring).
+    cmd = config.get("command")
+    if isinstance(cmd, list) and cmd and all(isinstance(s, str) for s in cmd):
+        return list(cmd)
+    return [DEFAULT_SHELL, "-i"]
+
+
+# ────────────────────────────────────────────────────────────────────────
 # PTY spawn helper + in-memory registry.
 # ────────────────────────────────────────────────────────────────────────
 
@@ -189,6 +372,55 @@ def spawn_pty(
         cwd=cwd,
         env=proc_env,
         echo=True,
+        dimensions=dimensions,
+    )
+
+
+def spawn_pty_for_config(
+    pane_id: str,
+    config: dict[str, Any],
+    *,
+    dimensions: tuple[int, int] = (24, 80),
+) -> PtyProcess:
+    """Spawn a PTY using a `load_pane_configs`-shaped dict.
+
+    Wraps `spawn_pty` with three policy decisions:
+      1. argv comes from `resolve_command(config)` — bash default or
+         `["ssh", host]` for kind=="ssh".
+      2. cwd is `os.path.expanduser`'d (so `~/code` works in the TOML).
+      3. env is an overlay over os.environ — config keys win.
+
+    Unknown pane ids (i.e., `config == {}`) fall back to a default plain
+    bash pane. This is the safety valve that keeps `handle_pty`'s lookup
+    `self.pane_configs.get(pane_id, {})` from raising on the no-match path.
+    """
+    # Default fall-through: an empty dict ⇒ bash.
+    if "kind" not in config:
+        config = {**config, "kind": "bash"}
+
+    argv = resolve_command(config)
+
+    # CWD — string or None, expanduser'd.
+    raw_cwd = config.get("cwd")
+    cwd: str | None
+    if isinstance(raw_cwd, str) and raw_cwd:
+        cwd = os.path.expanduser(raw_cwd)
+    else:
+        cwd = None
+
+    # ENV — overlay onto os.environ.
+    raw_env = config.get("env")
+    if isinstance(raw_env, dict) and raw_env:
+        proc_env = dict(os.environ)
+        proc_env.update({k: v for k, v in raw_env.items() if isinstance(v, str)})
+    else:
+        proc_env = None  # spawn_pty default: inherit os.environ
+
+    return spawn_pty(
+        pane_id,
+        cwd=cwd,
+        env=proc_env,
+        command=argv,
         dimensions=dimensions,
     )
 
@@ -748,18 +980,11 @@ class PTYServer:
     def _spawn_for_pane(self, pane_id: str, cfg: dict[str, Any]) -> PtyProcess:
         """Spawn a PtyProcess for `pane_id` using `cfg` (from pane_configs).
 
-        Plan 01 default behavior preserved when `cfg` is empty: plain bash
-        in the user's home with inherited env. Task 2 swaps the body of
-        this method for a call into `spawn_pty_for_config`; Task 1 keeps
-        the surface minimal so the Plan 01 contract still holds for any
-        caller that passes a bare dict.
+        Delegates to `spawn_pty_for_config`, which handles the bash-vs-ssh
+        branch, expanduser on cwd, and env overlay. Empty `cfg` ⇒ plain
+        bash in the user's home (the Plan 01 default behavior).
         """
-        return spawn_pty(
-            pane_id,
-            cwd=cfg.get("cwd"),
-            env=cfg.get("env"),
-            command=cfg.get("command"),
-        )
+        return spawn_pty_for_config(pane_id, cfg)
 
     # ------------------------------------------------------------------
     # Reaper.

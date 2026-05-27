@@ -36,6 +36,7 @@ This entrypoint mirrors `bin/invisible-dashboard`'s shape:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -43,13 +44,27 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
 # Imports below this point come from $HERE/../lib via the path insert above.
-# pty_server is the module Plan 01 just created; validate_host is its
-# loopback-only host guard.
-from pty_server import PTYServer, validate_host  # noqa: E402
+# pty_server is the module Plan 01 created; validate_host is the loopback-only
+# host guard. Plan 02 adds RECONNECT_GRACE_SECONDS and load_pane_configs.
+from pty_server import (  # noqa: E402
+    PTYServer,
+    RECONNECT_GRACE_SECONDS,
+    load_pane_configs,
+    validate_host,
+)
 
-# TODO(plan-02): the daemon will likely want `load_env()` from lib/config.py
-# once Plan 02 wires invisible.toml [[terminals]] config loading here. Leaving
-# the import out of Plan 01 to keep the surface minimal.
+
+def _default_config_path() -> Path:
+    """Resolve the default invisible.toml path.
+
+    Mirrors `lib/config.home()`: honors `$INVISIBLE_HOME`, falls back to
+    `~/.invisible`. We compute this here (rather than import `home()`) so
+    the CLI's `--config` default is visible in `--help` and so a missing
+    file is silently tolerated by `load_pane_configs` (the daemon still
+    runs with all-default plain-bash panes).
+    """
+    base = os.environ.get("INVISIBLE_HOME") or "~/.invisible"
+    return Path(os.path.expanduser(base)) / "invisible.toml"
 
 
 def main() -> int:
@@ -58,7 +73,9 @@ def main() -> int:
         description=(
             "WebSocket PTY daemon for the invisible Terminals page. "
             "Binds 127.0.0.1:8091 by default and spawns one bash PTY per "
-            "ws://127.0.0.1:8091/pty/{pane_id} connection."
+            "ws://127.0.0.1:8091/pty/{pane_id} connection. Pane configs "
+            "(bash vs ssh, cwd, env) are loaded from invisible.toml "
+            "[[terminals]] blocks at startup."
         ),
     )
     ap.add_argument(
@@ -71,6 +88,27 @@ def main() -> int:
         type=int,
         default=8091,
         help="TCP port to listen on (default 8091)",
+    )
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=_default_config_path(),
+        help=(
+            "path to invisible.toml (default: $INVISIBLE_HOME/invisible.toml "
+            "or ~/.invisible/invisible.toml). Missing file is tolerated — "
+            "daemon will run with all-default plain-bash panes."
+        ),
+    )
+    ap.add_argument(
+        "--reconnect-grace",
+        type=int,
+        default=RECONNECT_GRACE_SECONDS,
+        metavar="SECONDS",
+        help=(
+            "seconds a disconnected PTY survives before the reaper kills it "
+            f"(default {RECONNECT_GRACE_SECONDS}). Set to 0 for "
+            "kill-on-disconnect (Plan 01 behavior)."
+        ),
     )
     args = ap.parse_args()
 
@@ -85,9 +123,20 @@ def main() -> int:
         )
         return 2
 
-    # TODO(plan-02): load_env() + read [[terminals]] entries from invisible.toml
-    # to populate pane_configs (cwd, env, command, ssh) before construction.
-    server = PTYServer(host=args.host, port=args.port)
+    # Plan 02: read [[terminals]] from invisible.toml. Missing or malformed
+    # file ⇒ empty dict; the daemon still runs with default plain-bash panes.
+    pane_configs = load_pane_configs(args.config)
+    print(
+        f"[invisible-pty] loaded {len(pane_configs)} pane config(s) "
+        f"from {args.config}"
+    )
+
+    server = PTYServer(
+        host=args.host,
+        port=args.port,
+        pane_configs=pane_configs,
+        reconnect_grace=args.reconnect_grace,
+    )
     server.serve()
     return 0
 
