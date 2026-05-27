@@ -7,10 +7,10 @@ last_updated: 2026-05-26
 # Project State
 
 ## Current Position
-**Status:** Phase 01 in progress — Plan 02 implementation done; awaiting human-verify checkpoint
+**Status:** Phase 01 code complete — human-verify + CORS follow-up deferred (user moved on)
 **Current Phase:** 01-api-v1-chat-end-to-end
 **Last Activity:** 2026-05-26
-**Last Activity Description:** Plan 01-02 Task 1 complete — frontend/ai-chat.jsx posts to /api/v1/chat with full error-state map (commit 9f47c44). Task 2 is a blocking human-verify checkpoint with a pre-flagged CORS risk (see 01-02-SUMMARY.md).
+**Last Activity Description:** Phase 01 code shipped (both plans implemented). Task 2 of plan 02 (the 6-check browser UAT) and the predicted CORS dashboard fix were explicitly deferred at user request. See `phases/INV-01-api-v1-chat-end-to-end/FOLLOWUPS.md` for the resume checklist before `/gsd:ship`.
 
 ## Progress
 **Phases Complete:** 0 (of 1)
