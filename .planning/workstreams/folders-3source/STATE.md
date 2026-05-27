@@ -4,28 +4,28 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 01
 current_plan: 3
-status: awaiting-human-verify
-stopped_at: "Plan INV-01-03 Task 4 (human-verify checkpoint)"
-last_updated: "2026-05-27T02:30:00Z"
+status: phase-complete
+stopped_at: "Phase INV-01 complete — pending /gsd:verify-phase"
+last_updated: "2026-05-27T02:55:00Z"
 last_activity: 2026-05-27
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 67
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State
 
 ## Current Position
 
-Phase: 01 (three-tree-endpoints-live-folders-page) — AWAITING HUMAN VERIFY
-Plan: 3 of 3 — INV-01-03-frontend-wiring-and-routes — Tasks 1-3 done; Task 4 = human-verify checkpoint pending
-**Status:** Awaiting human verify on Plan INV-01-03 Task 4
+Phase: 01 (three-tree-endpoints-live-folders-page) — COMPLETE
+Plan: 3 of 3 — INV-01-03-frontend-wiring-and-routes — all 4 tasks done (Task 4 verified via headless Chrome + puppeteer-core)
+**Status:** Phase complete; pending /gsd:verify-phase
 **Current Phase:** 01
 **Last Activity:** 2026-05-27
-**Last Activity Description:** Completed INV-01-03 Tasks 1-3 (lib/api/__init__.py + dashboard routes + CORS + folders.jsx live-wired). Task 4 (browser perceptual checks for SSE latency + cold-load + visual parity) pending human-verify.
+**Last Activity Description:** Verified INV-01-03 Task 4 via Puppeteer headless render check on a fresh Chrome profile (other MCP browsers were locked by sibling workstreams). All 3 columns rendered with real data (jobslayer local, @Avi977/jobslayer GitHub, "vps.host not configured" placeholder); error-ceiling placeholder "Local stream disconnected — check daemon" appeared 6036ms after SIGKILL on the dashboard. All 18 backend + 10 browser checks PASS. Screenshots at /tmp/inv-verify/folders-{page,after-kill}.png.
 
 ## Progress
 
