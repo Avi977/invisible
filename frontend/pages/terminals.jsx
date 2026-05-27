@@ -85,7 +85,7 @@ function ContextHeader({ ctx, focused }) {
   );
 }
 
-function Terminal({ idx, focused, onFocus, pane }) {
+function TerminalPane({ idx, focused, onFocus, pane }) {
   const containerRef = useRefT(null);
   const termRef = useRefT(null);
   const fitRef = useRefT(null);
@@ -273,7 +273,7 @@ function Terminals({ projects, selectedProject, setSelectedProject }) {
       </div>
       <div className="term-layout" style={{ height: "calc(100% - 56px)" }}>
         {order.map((i, slot) => (
-          <Terminal
+          <TerminalPane
             key={PTY_PANES[i].id}
             idx={i}
             pane={PTY_PANES[i]}

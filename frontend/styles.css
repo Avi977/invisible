@@ -746,12 +746,12 @@ input.field:focus, textarea.field:focus { border-color: var(--accent-soft); }
 .term-layout {
   display: grid;
   grid-template-columns: 2.4fr 1fr;
-  grid-template-rows: repeat(3, 1fr);
+  grid-template-rows: repeat(5, 1fr);
   gap: var(--pad-3);
   height: 100%;
 }
 .term-pane {
-  grid-row: span 3;
+  grid-row: span 5;
   display: flex; flex-direction: column;
   background: rgba(8, 10, 14, 0.85);
   border: 1px solid var(--border-1);
