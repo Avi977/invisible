@@ -59,6 +59,7 @@ from config import home, load_env  # noqa: E402
 from dashboard_render import (  # noqa: E402
     humanize_age, render_index, render_project, render_not_found,
 )
+from api import tree_local, tree_vps, tree_repo  # noqa: E402
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -251,6 +252,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
         self.send_header("Cache-Control", "no-store")
+        # CORS: the frontend on :8090 fetches the dashboard on :8765.
+        # Authorization is NOT a CORS-safelisted header, so every fetch
+        # triggers a preflight OPTIONS; without these headers the browser
+        # silently blocks the actual GET. See also: do_OPTIONS below.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.end_headers()
         self.wfile.write(b)
 
@@ -263,6 +271,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     # ---- routing ----
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        """CORS preflight handler — NOT auth-gated.
+
+        Preflight requests intentionally do NOT carry the Authorization
+        header (that's the whole point of the preflight). Requiring auth
+        here would 401 every cross-origin call from the browser before
+        the real GET ever fires.
+        """
+        path = urllib.parse.urlparse(self.path).path
+        if path.startswith("/api/v1/tree/"):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.end_headers()
+            return
+        # Fallback: bare 204 for non-API OPTIONS (no CORS headers needed
+        # because those paths aren't fetched cross-origin by the frontend).
+        self.send_response(204)
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
 
@@ -310,6 +340,47 @@ class DashboardHandler(BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             n = int(q.get("n", ["20"])[0])
             self._send_json(fetch_recent_reviews(n))
+            return
+
+        # ── Three-source tree endpoints (REQ-03) ────────────────────────
+        # Auth was already enforced at the top of do_GET via _auth_ok();
+        # for the SSE branch the EventSource passes the token as ?token=
+        # because EventSource cannot set the Authorization header — the
+        # _token_from_request() helper already accepts both forms.
+        if path == "/api/v1/tree/local":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            project = q.get("project", [None])[0]
+            if q.get("watch") == ["1"]:
+                # SSE — stream_diffs blocks until client disconnect.
+                # It writes its OWN response headers (incl. CORS), so we
+                # must NOT call _send_json / _send_text before it.
+                try:
+                    tree_local.stream_diffs(self, project=project)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # client went away; nothing to do
+                return
+            self._send_json(tree_local.walk_all(project=project))
+            return
+
+        if path == "/api/v1/tree/repo":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            project = q.get("project", [None])[0]
+            self._send_json(tree_repo.walk_all(project=project))
+            return
+
+        if path == "/api/v1/tree/vps":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            project = q.get("project", [None])[0]
+            payload, status = tree_vps.walk_all(project=project)
+            # tree_vps wraps its 503 error body as [VPS_NOT_CONFIGURED]
+            # (a list with one error dict). REQ-03 acceptance wants the
+            # body to be a bare {"error": "..."} object. Unwrap the
+            # error case so the wire shape matches the spec; tree-shape
+            # payloads (status=200) pass through as-is (lists).
+            if status != 200 and isinstance(payload, list) and payload:
+                self._send_json(payload[0], status=status)
+                return
+            self._send_json(payload, status=status)
             return
 
         self._send_text("not found\n", 404)
