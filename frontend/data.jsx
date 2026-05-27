@@ -459,3 +459,20 @@ const ANALYTICS = {
 
 Object.assign(window, { ANALYTICS });
 Object.assign(window, { DATA_SETS, FOLDERS, TOOL_WORKFLOWS, TERM_CONTEXT });
+
+// ── Real-data fetchers (M1 wiring) ─────────────────────────────────
+const API_BASE = "http://127.0.0.1:8765";
+
+async function fetchProjects() {
+  try {
+    const response = await fetch(API_BASE + "/api/v1/projects", { credentials: "omit" });
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+    return await response.json();
+  } catch (e) {
+    throw new Error("fetchProjects: " + (e.message || "network error"));
+  }
+}
+
+Object.assign(window, { fetchProjects });
