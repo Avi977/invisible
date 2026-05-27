@@ -7,10 +7,10 @@ last_updated: 2026-05-26
 # Project State
 
 ## Current Position
-**Status:** Phase 01 ready to ship — 4 of 6 UAT checks pass in playwright (1, 2a, 5, 6); 3 + 4 deferred (need human or fault-injection harness). CORS fix shipped.
-**Current Phase:** 01-api-v1-chat-end-to-end
+**Status:** Phase 01 shipped — PR #1 open
+**Current Phase:** 01-api-v1-chat-end-to-end (complete)
 **Last Activity:** 2026-05-26
-**Last Activity Description:** Completed playwright-driven UAT for size-cap (check 5: 8500 chars → exact "Message too long" string + zero network requests) and thinking-guard (check 6: second send during `thinking=true` blocked; user message list stays at length 1; exactly one POST). Also discovered cross-workstream daemon contention as a separate operational risk (see FOLLOWUPS.md §5).
+**Last Activity Description:** Shipped ws/ai-bubble as https://github.com/Avi977/invisible/pull/1. 11 commits ahead of main; 14 files / ~1944 insertions. VERIFICATION.md status: pass (4/6 playwright UAT, 2 source-verified deferred). Awaiting merge.
 
 ## Progress
 **Phases Complete:** 0 (of 1)
