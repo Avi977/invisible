@@ -32,6 +32,7 @@ same code runs identically on every machine.
 - `invisible` — 6-pane tmux cockpit (logs, orchestrator, ssh, dashboard, GSD, watch)
 - `invisible-app` — native desktop wrapper (currently pywebview + pystray; migrating to Tauri)
 - `invisible-frontend` — React UI on `127.0.0.1:8090` (Dashboard, Focus, Folders, Relations, Terminals, Tools, Calendar, Analytics + AI bubble + Tweaks). Source in `frontend/`, dropped from Claude Design 2026-05-26.
+- `invisible-pty` — WebSocket PTY daemon on `127.0.0.1:8091`. Serves `ws://127.0.0.1:8091/pty/{id}` (live bash / ssh shells) + `GET /context/{id}` (per-pane checkpoint summary). The React Terminals page connects here.
 - `invisible-dashboard` — server-rendered HTML + JSON API on `127.0.0.1:8765` (the React frontend's data backend)
 - `invisible-server` — VPS-side daemon mirroring the dashboard remotely
 
