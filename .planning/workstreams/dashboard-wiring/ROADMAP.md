@@ -25,7 +25,7 @@
   5. The "Mock data" toggle in the Tweaks panel still works for the OTHER pages (it falls back to mock for any data not yet wired).
 
 **Plans**: 2 plans
-- [ ] 01-01: Backend — `lib/api/projects.py` builds project objects from real sources; `bin/invisible-dashboard` mounts `/api/v1/projects` via `lib/api/__init__.py` registry
+- [x] 01-01: Backend — `lib/api/projects.py` builds project objects from real sources; `bin/invisible-dashboard` mounts `/api/v1/projects` via `lib/api/__init__.py` registry — 2026-05-27
 - [ ] 01-02: Frontend — `frontend/pages/dashboard.jsx` fetches `/api/v1/projects` on mount, adds loading + error states, keeps Tweaks fallback for other pages
 
 ## Files this workstream OWNS
