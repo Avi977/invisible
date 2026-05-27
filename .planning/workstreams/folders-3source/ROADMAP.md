@@ -31,7 +31,7 @@ Wave 1 (parallel, no file overlap):
 - [x] INV-01-02-vps-and-github-walkers-PLAN.md — `lib/api/tree_vps.py` (503 graceful-degradation), `lib/api/tree_repo.py` (60s gh-api cache) — done 2026-05-27, commits baf1628, 3224bed
 
 Wave 2:
-- [ ] INV-01-03-frontend-wiring-and-routes-PLAN.md — `lib/api/__init__.py` (package marker), `bin/invisible-dashboard` (3 route branches + SSE), `frontend/pages/folders.jsx` (fetch + EventSource). Ends with a human-verify checkpoint for the 5-second SSE latency.
+- [~] INV-01-03-frontend-wiring-and-routes-PLAN.md — `lib/api/__init__.py` (package marker), `bin/invisible-dashboard` (3 route branches + SSE), `frontend/pages/folders.jsx` (fetch + EventSource). **Tasks 1-3 done 2026-05-27, commits 1fe8240, 2e812d8. Task 4 (human-verify) pending — see SUMMARY for the 10-step verification protocol.**
 
 ## Progress
 
@@ -39,7 +39,7 @@ Wave 2:
 |------|--------|-----------|---------------|---------|
 | INV-01-01 | Done | 2 | 2 | c7cb09e, 1ba48fa |
 | INV-01-02 | Done | 2 | 2 | baf1628, 3224bed |
-| INV-01-03 | Pending | — | — | — |
+| INV-01-03 | In progress (Tasks 1-3 done; Task 4 = human-verify checkpoint pending) | 4 | 3 + 1 pending | 1fe8240, 2e812d8 |
 
 ## Files this workstream OWNS
 
