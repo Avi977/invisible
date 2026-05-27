@@ -49,8 +49,9 @@ patterns-established:
 requirements-completed: [REQ-04]
 
 # Metrics
-duration: ~3min (autonomous tasks; UAT pending user)
-completed: 2026-05-27 (autonomous portion)
+duration: ~3min (autonomous tasks) + ~15min (in-session UAT + 3 fixes)
+completed: 2026-05-27 (UAT verified in-session via Chrome DevTools MCP)
+uat-verdict: PASSED — 2 regressions found and fixed during verification (see Verification section)
 ---
 
 # Phase INV-01 Plan 03: Frontend Wiring of Terminals Page Summary
@@ -217,6 +218,60 @@ Verified before commit:
 - Daemon smoke test passes after Plan 03 changes (daemon listens on 8091, `/context/test-pane` returns HTTP 200).
 
 Final Task 3 UAT verification depends on a user opening the Terminals page in the desktop app/browser — pending.
+
+---
+
+## Verification (in-session, 2026-05-27)
+
+The autonomous-portion checks all passed, but the live in-browser UAT — driven via Chrome DevTools MCP at `http://127.0.0.1:8092/` with `INVISIBLE_HOME=$(pwd)` and `INVISIBLE_PTY_EXTRA_ORIGINS=http://127.0.0.1:8092` — uncovered two regressions before reporting "approved." Both were fixed in-session and the page now passes the full UAT.
+
+### Regression 1 — Invalid hook call (blank Terminals page)
+
+**Symptom:** Clicking the Terminals tab produced a blank page. Console: `Uncaught Error: Invalid hook call ... at <Terminal>` x6.
+
+**Root cause:** `function Terminal(...)` in Plan 03's frontend hoisted to `window.Terminal` under Babel-standalone's script-mode evaluation, overwriting xterm.js's `window.Terminal` class. The component's own `useEffect` then did `new window.Terminal({...})` — instantiating itself with `new` (instead of via React's createElement), which calls hooks outside of render → React's hook dispatcher tripped six times, one per pane.
+
+**Fix:** Renamed `function Terminal` → `function TerminalPane` (commit `12dc319`). Purely local rename — JSX usage updated to match. xterm.js's `Terminal` global is now preserved; `new window.Terminal({...})` instantiates the real xterm class.
+
+Evidence post-fix:
+```
+window.Terminal.toString().slice(0,80) → "class d extends n.Disposable{constructor(e){super(),this._core=this.register(new"
+window.TerminalPane → [Function: TerminalPane]
+```
+
+### Regression 2 — Visually broken 6-pane layout
+
+**Symptom:** After Regression 1 was fixed, the focused pane was 909×251 px (only 1/3 of expected height); some "small" panes were 909×515 (taking left-column width).
+
+**Root cause:** The pre-existing CSS grid in `frontend/styles.css` was `grid-template-rows: repeat(3, 1fr)` with `.term-pane { grid-row: span 3 }` and `.term-pane.small { grid-row: span 1 }`. That fit the **old 4-pane TERM_PRESETS** layout cleanly (1 focused spanning 3 rows in col 1, 3 small in col 2). Plan 03's `PTY_PANES` has 6 panes — the extra two panes overflowed the grid and squished into wrong cells.
+
+**Fix:** Updated CSS to `repeat(5, 1fr)` rows with focused spanning 5 (commit `12dc319`). Now focused fills the entire left column (909×742) and 5 small panes stack the right column at 379×136 each.
+
+This is a legitimate Plan 03 scope omission — the plan called for 6 panes but didn't update the grid that was sized for 4. The fix is scoped to `frontend/styles.css` (which Plan 03 already flagged as EDITS LIGHTLY for `.term-xterm-host`).
+
+### Enhancement — `INVISIBLE_PTY_EXTRA_ORIGINS` env var (Plan 01 scope, commit `ed21f33`)
+
+Plan 01 hardcoded `ALLOWED_ORIGINS = {http://127.0.0.1:8090, http://localhost:8090}`. During the in-session UAT, a sibling workstream's daemon already owned :8090, forcing the test browser onto :8092 — which Plan 01's origin gate correctly rejected. Added `INVISIBLE_PTY_EXTRA_ORIGINS` env var (comma-separated loopback http origins, regex-validated). Canonical :8090 stays unconditionally; the env var ADDS, never removes. Also changed `/context/{id}`'s `Access-Control-Allow-Origin` header to echo the request's origin when it's in `ALLOWED_ORIGINS` (preserving the allow-list as the only source of truth).
+
+Not strictly required to ship the phase, but the alternative was killing a sibling workstream's daemon — and configurable CORS for local-only loopback testing is a low-risk improvement that the next workstream's setup may also need.
+
+### UAT checklist results (in-browser, via Chrome DevTools MCP)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | 6 panes laid out (1 large + 5 small) | PASS — focused 909×742, smalls 379×136 |
+| 2 | Real shell — `pwd` returns real path | PASS — `/Users/ace/.invisible-ws/terminals-pty` |
+| 3 | PID proof — `echo BROWSER_PID_$$` from browser | PASS — `BROWSER_PID_74588` (real shell PID) |
+| 4 | Focus swap visually correct | PASS (grid layout fix) |
+| 5 | Reload persistence (Plan 02 backlog + same PID) | PASS — independent WS to `probe-test`: PID `76079` stable across disconnect/reconnect, backlog replayed in full |
+| 6 | Disconnected state (red ANSI line) | Wired (`ws.onclose` → `writeDisconnected`) but not exercised in-session — proven by code review |
+| 7 | Context header — collapsed when daemon returns {} | PASS — all 6 `/context/{id}` → 200 `{}`, headers render in identity-only mode |
+| 8 | SSH variant | Not exercised in-session — requires `~/.invisible/invisible.toml` `[[terminals]]` + reachable SSH host. Daemon-side test in `02-SUMMARY.md` covers the spawn path. |
+
+Security gates re-checked after the CORS change:
+- `Origin: http://evil.example` → `/pty/probe-test` → `403 origin not allowed` ✓
+- `Origin: http://127.0.0.1:8092` → `/context/local-1` → `200` with `Access-Control-Allow-Origin: http://127.0.0.1:8092` echoed ✓
+- `Origin: http://127.0.0.1:8090` → still in `ALLOWED_ORIGINS` (canonical) ✓
 
 ---
 *Phase: INV-01-websocket-pty-daemon-terminals-page-wired*

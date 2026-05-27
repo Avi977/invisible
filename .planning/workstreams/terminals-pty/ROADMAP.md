@@ -6,7 +6,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: WebSocket PTY daemon + Terminals page wired**
+- [x] **Phase 1: WebSocket PTY daemon + Terminals page wired** (verified in-session 2026-05-27)
 
 ## Phase Details
 
@@ -26,9 +26,9 @@
   6. `frontend/pages/terminals.jsx` uses xterm.js for rendering (loaded from unpkg, matching the Babel-standalone pattern of the rest of the frontend).
 
 **Plans**: 3 plans
-- [ ] 04-01: PTY daemon — `bin/invisible-pty` + `lib/pty_server.py` (Python `websockets` + `ptyprocess`)
-- [ ] 04-02: Persistent session store — in-memory dict keyed by pane id; survives reconnects; daemon restart clears
-- [ ] 04-03: Frontend wiring — `frontend/pages/terminals.jsx` swaps `TERM_PRESETS` for xterm.js panes connected over WebSocket
+- [x] 04-01: PTY daemon — `bin/invisible-pty` + `lib/pty_server.py` (Python `websockets` + `ptyprocess`)
+- [x] 04-02: Persistent session store — in-memory dict keyed by pane id; survives reconnects; daemon restart clears
+- [x] 04-03: Frontend wiring — `frontend/pages/terminals.jsx` swaps `TERM_PRESETS` for xterm.js panes connected over WebSocket
 
 ## Files this workstream OWNS
 
