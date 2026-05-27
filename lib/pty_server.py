@@ -77,10 +77,22 @@ PANE_ID_RE: re.Pattern[str] = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 # Origin pinning. T-01-02 DNS-rebinding defence: WebSocket upgrades whose
 # Origin is not in this set are rejected with HTTP 403 *before* upgrade.
+#
+# Extra origins can be added via INVISIBLE_PTY_EXTRA_ORIGINS — comma-separated
+# absolute URLs (e.g. "http://127.0.0.1:8092,http://localhost:8092"). Use
+# during local testing when the frontend serves on a non-default port; the
+# canonical production origin remains :8090. Each entry is validated as a
+# loopback http origin to preserve the DNS-rebinding defence.
 ALLOWED_ORIGINS: set[str] = {
     "http://127.0.0.1:8090",
     "http://localhost:8090",
 }
+_extra_origins_raw = os.environ.get("INVISIBLE_PTY_EXTRA_ORIGINS", "").strip()
+if _extra_origins_raw:
+    _LOOPBACK_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\]):[0-9]{1,5}$")
+    for _origin in (o.strip() for o in _extra_origins_raw.split(",")):
+        if _origin and _LOOPBACK_ORIGIN_RE.match(_origin):
+            ALLOWED_ORIGINS.add(_origin)
 
 # Host binding allow-list. T-01-03 elevation defence: refuse to expose the
 # daemon on any non-loopback interface. Validated at CLI startup.
@@ -752,7 +764,7 @@ class PTYServer:
         # /context/{pane_id} — HTTP GET, not a WS upgrade.
         m_ctx = _CTX_PATH_RE.match(path)
         if m_ctx:
-            return self._handle_context_http(m_ctx.group(1))
+            return self._handle_context_http(m_ctx.group(1), request.headers.get("Origin"))
 
         # /pty/{pane_id} — must pass Origin gate before WS upgrade.
         m_pty = _PTY_PATH_RE.match(path)
@@ -773,7 +785,7 @@ class PTYServer:
             content_type="application/json",
         )
 
-    def _handle_context_http(self, raw_pane_id: str) -> Response:
+    def _handle_context_http(self, raw_pane_id: str, request_origin: str | None = None) -> Response:
         """Serve `GET /context/{pane_id}` → JSON body of load_pane_context.
 
         Defends T-01-05: rejects pane ids that fail PANE_ID_RE before
@@ -799,13 +811,19 @@ class PTYServer:
         ctx = load_pane_context(wt)
 
         body = json.dumps(ctx).encode("utf-8")
+        # CORS — echo back the request's Origin when it's in ALLOWED_ORIGINS,
+        # else fall back to the canonical production origin. Echoing the
+        # caller's origin (rather than a hardcoded one) lets sibling workstream
+        # test setups using INVISIBLE_PTY_EXTRA_ORIGINS work without rebuilding
+        # the daemon, while still enforcing the allow-list — unknown origins
+        # see the default value and the browser blocks the response.
+        allow_origin = request_origin if (request_origin and request_origin in ALLOWED_ORIGINS) else "http://127.0.0.1:8090"
         return _http_response(
             HTTPStatus.OK,
             body,
             content_type="application/json",
             extra_headers={
-                # CORS — frontend at :8090 fetches this from :8091.
-                "Access-Control-Allow-Origin": "http://127.0.0.1:8090",
+                "Access-Control-Allow-Origin": allow_origin,
                 "Cache-Control": "no-store",
             },
         )
