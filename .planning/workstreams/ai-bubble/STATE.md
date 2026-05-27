@@ -7,10 +7,10 @@ last_updated: 2026-05-26
 # Project State
 
 ## Current Position
-**Status:** Phase 01 verified working — happy path + history-persistence checks pass in playwright. CORS fix shipped. UAT checks 3-6 still pending.
+**Status:** Phase 01 ready to ship — 4 of 6 UAT checks pass in playwright (1, 2a, 5, 6); 3 + 4 deferred (need human or fault-injection harness). CORS fix shipped.
 **Current Phase:** 01-api-v1-chat-end-to-end
 **Last Activity:** 2026-05-26
-**Last Activity Description:** Debug session uncovered + fixed two issues: (a) frontend daemon was serving from `~/.invisible/` (main checkout, OLD code) instead of the workstream worktree — fixed by restarting with `INVISIBLE_HOME=$(pwd)`, (b) dashboard daemon missing CORS preflight + headers — fixed by adding `do_OPTIONS` + `end_headers` override to `bin/invisible-dashboard`. Playwright then confirmed real Claude responses + `msgs` history in the bubble. See `phases/INV-01-api-v1-chat-end-to-end/FOLLOWUPS.md` for remaining UAT.
+**Last Activity Description:** Completed playwright-driven UAT for size-cap (check 5: 8500 chars → exact "Message too long" string + zero network requests) and thinking-guard (check 6: second send during `thinking=true` blocked; user message list stays at length 1; exactly one POST). Also discovered cross-workstream daemon contention as a separate operational risk (see FOLLOWUPS.md §5).
 
 ## Progress
 **Phases Complete:** 0 (of 1)
