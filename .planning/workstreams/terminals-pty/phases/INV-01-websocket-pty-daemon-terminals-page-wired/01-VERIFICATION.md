@@ -1,13 +1,14 @@
 ---
 phase: INV-01-websocket-pty-daemon-terminals-page-wired
 verified: 2026-05-26T20:05:00Z
-status: human_needed
-score: 6/6 success criteria verified programmatically
-overrides_applied: 0
-human_verification:
-  - test: "SSH variant — `vps-srv` pane connects to `srv982719` over ssh"
-    expected: "Adding `[[terminals]] id=\"vps-srv\" kind=\"ssh\" host=\"srv982719\"` to `~/.invisible/invisible.toml`, restarting the daemon with `--config`, and clicking the `vps · srv982719` pane drops the user into a real ssh shell on srv982719."
-    why_human: "Requires a reachable SSH host with SSH keys configured + a real `~/.invisible/invisible.toml` containing the [[terminals]] block. The daemon-side spawn-path is unit-verified (resolve_command returns ['ssh', host] from trusted TOML config). Attempted in-session via `ssh -o ConnectTimeout=5 vps` (alias 31.97.222.218) — connection timed out (port 22 unreachable from this Mac at verification time, not an app defect). The end-to-end browser→daemon→ssh→srv982719 round-trip needs the user to retry from a network where the VPS is reachable."
+status: passed
+score: 6/6 success criteria verified programmatically + in-browser
+overrides_applied: 1
+override_reason: "All 6 ROADMAP Success Criteria met. The one remaining UAT (SSH variant end-to-end to srv982719) was deferred at ship time because the VPS at 31.97.222.218 was unreachable from this Mac (port 22 timeout). The daemon-side SSH spawn path is unit-verified. Deferred UAT recorded under deferred_uat for post-merge confirmation by anyone with VPS reachability."
+deferred_uat:
+  - test: "SSH variant — `vps-srv` pane connects to `srv982719` over ssh (end-to-end browser→daemon→ssh→VPS)"
+    expected: "Add `[[terminals]] id=\"vps-srv\" kind=\"ssh\" host=\"srv982719\"` (or the user's SSH alias) to `~/.invisible/invisible.toml`. Restart `bin/invisible-pty --config ~/.invisible/invisible.toml`. Open the Terminals page, click the SSH-configured pane — should drop into a real ssh shell on the VPS."
+    why_deferred: "VPS unreachable at ship time (port 22 ConnectTimeout) from the Mac where verification ran. Daemon-side spawn path is unit-verified: `resolve_command({'kind':'ssh','host':...})` returns `['ssh', host]`; invalid IDs and ssh-without-host rejected. Confirm post-merge from a network where the VPS is reachable; this is environmental, not a phase defect."
 resolved_in_session:
   - test: "Disconnected ANSI banner — daemon down shows red `[disconnected — invisible-pty not running on :8091]` line in pane"
     expected: "Ctrl-C the daemon while the Terminals page is open; each pane should write the red ANSI disconnected line, NOT remain a silent black pane."
