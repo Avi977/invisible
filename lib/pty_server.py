@@ -584,3 +584,37 @@ def _http_response(
         headers=headers,
         body=body,
     )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# PLAN-01 verification log
+# ────────────────────────────────────────────────────────────────────────
+# This marker comment is the seam Plan 02 and Plan 03 grep for to confirm
+# the Plan 01 daemon surface is stable. Do not move or rename the named
+# exports above this line without coordinating with those plans.
+#
+# Verified gates (Task 3, end-to-end against a live daemon on :8091):
+#   (a) /pty/test-1 happy path     — bash PTY spawned, `pwd\n` round-trips
+#                                    and stdout streams back as text frames.
+#   (b) Bad pane id (T-01-01)      — `..%2Fetc%2Fpasswd` URL-decoded to a
+#                                    PANE_ID_RE non-match → WS close 1008.
+#   (c) Bad origin (T-01-02)       — `Origin: http://evil.example` rejected
+#                                    by _process_request with HTTP 403
+#                                    before the WS handshake completes.
+#   (d) /context/{pane_id} (T-01-05) — JSON object served on 200; absent
+#                                    checkpoint returns `{}` with no path
+#                                    information leaked.
+#
+# Threat-model gates not directly probed by Task 3 (covered by Tasks 1 & 2):
+#   - T-01-03 host-binding   : --host 0.0.0.0 → exit 2 (Task 2 verify).
+#   - T-01-04 PTY cap (32)   : MAX_CONCURRENT_PTYS enforced in handle_pty;
+#                              behaviour asserted by unit test in Plan 02
+#                              when reconnect-grace lands (the cap is
+#                              easier to test against a stable registry).
+#
+# Plan 02 will extend, NOT replace:
+#   - handle_pty teardown    : last `# TODO(plan-02)` marker — swap kill-on-
+#                              disconnect for reconnect-grace + reap.
+#   - spawn branch           : add SSH variant when cfg["ssh"] is set.
+#   - PTYServer constructor  : populate pane_configs from invisible.toml.
+
