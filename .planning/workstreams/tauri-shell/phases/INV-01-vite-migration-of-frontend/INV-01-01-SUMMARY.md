@@ -2,10 +2,10 @@
 phase: INV-01-vite-migration-of-frontend
 workstream: tauri-shell
 plan: 01
-status: in-progress
-checkpoint: task-4-human-verify
-completed_tasks: [1, 2, 3]
-pending_tasks: [4, 5]
+status: complete
+checkpoint: ~
+completed_tasks: [1, 2, 3, 4, 5]
+pending_tasks: []
 subsystem: frontend-build-pipeline
 tags:
   - vite
@@ -63,15 +63,22 @@ decisions:
   - "AiChat.jsx feature-detects `window.claude.complete` and surfaces the identical legacy fallback string `(couldn't reach the model — try again)` when the global is absent (dev mode without Claude Design host)."
   - "Used PascalCase filenames under src/pages/ (Dashboard.jsx not dashboard.jsx) to match App.jsx imports and stay safe on case-sensitive Linux/Windows targets the Tauri bundle will eventually ship to."
 metrics:
-  duration_minutes: 0  # checkpoint: Task 4 still pending
-  completed_date: ~
+  duration_minutes: ~
+  completed_date: 2026-05-26
+  dist_size_kb: 296
+  dist_js_kb: 250
+  dist_js_gzip_kb: 77
+  dist_css_kb: 44
+  dist_css_gzip_kb: 8.2
+  vite_modules_transformed: 43
+  vite_build_ms: 444
 ---
 
-# Phase INV-01 Plan 01: Vite migration of frontend — Summary (CHECKPOINT)
+# Phase INV-01 Plan 01: Vite migration of frontend — Summary
 
-Replaced the in-browser Babel-standalone React build at `frontend/` with a production Vite 5 + React 18.3.1 pipeline at `frontend-vite/`. Same components, same styles, ESM imports instead of `window.X = X` globals, dev server with HMR on :5173, Tauri-ready `dist/` ready to bake in Phase 2.
+Replaced the in-browser Babel-standalone React build at `frontend/` with a production Vite 5 + React 18.3.1 pipeline at `frontend-vite/`. Same components, same styles, ESM imports instead of `window.X = X` globals, dev server with HMR on :5173, Tauri-ready `dist/` produced via `pnpm build`.
 
-**Status:** Tasks 1-3 complete. Task 4 is a `checkpoint:human-verify` — the orchestrator is awaiting human visual-parity approval at 1200×800 before Task 5 (production build) runs.
+**Status:** All 5 tasks complete. Operator approved visual parity at the Task 4 human-verify checkpoint (1200×800). Production build verified Tauri-ready in Task 5 — `dist/` ships with relative `./assets/` paths. Phase 2 (Tauri shell) is unblocked.
 
 ## What's done (Tasks 1-3)
 
@@ -228,57 +235,105 @@ $ git status --porcelain frontend/
 | Commit `d9dc93f` (Task 1) in git log                          | `git log --all                                             \| grep d9dc93f`            | FOUND |
 | Commit `f57b943` (Task 2) in git log                          | `git log --all                                             \| grep f57b943`            | FOUND |
 | Commit `25248ff` (Task 3) in git log                          | `git log --all                                             \| grep 25248ff`            | FOUND |
+| Commit `a14832e` (Task 4 checkpoint summary) in git log       | `git log --all                                             \| grep a14832e`            | FOUND |
+| Commit `f0d692b` (Task 5 build verification) in git log       | `git log --all                                             \| grep f0d692b`            | FOUND |
+| `frontend-vite/dist/index.html` exists post-build             | `test -f frontend-vite/dist/index.html`                     | FOUND   |
+| `frontend-vite/dist/assets/index-*.js` exists                 | `ls frontend-vite/dist/assets/index-*.js`                   | FOUND   |
+| `frontend-vite/dist/assets/index-*.css` exists                | `ls frontend-vite/dist/assets/index-*.css`                  | FOUND   |
+| dist/index.html uses relative `./assets/` paths               | `grep './assets/' frontend-vite/dist/index.html`            | FOUND   |
 | Legacy `frontend/` untouched                                  | `git status --porcelain frontend/` empty                    | FOUND   |
 
 **Self-Check: PASSED**
 
-## Background server status (for human verification)
+## Task 4 — Visual parity checkpoint (APPROVED)
 
-Two HTTP servers are running for the operator to compare side-by-side:
+Operator-approved at 2026-05-26. Both servers were left running for the static-serve comparison in Task 5:
 
-| Port | Source              | Process                                            | Status |
-| ---- | ------------------- | -------------------------------------------------- | ------ |
-| 8090 | `frontend/`         | `python3 -m http.server 8090 -d frontend` (legacy) | UP     |
-| 5173 | `frontend-vite/`    | `pnpm dev` (Vite + HMR)                            | UP     |
+| Port | Source              | Process                                            | Verdict at checkpoint |
+| ---- | ------------------- | -------------------------------------------------- | --------------------- |
+| 8090 | `frontend/`         | `python3 -m http.server 8090 -d frontend` (legacy) | Pixel-identical       |
+| 5173 | `frontend-vite/`    | `pnpm dev` (Vite + HMR)                            | Pixel-identical       |
 
-## Operator: Task 4 verification checklist
+All 8 sidebar pages, every Tweaks axis (Accent, Density, Sidebar, Dashboard Layout, Mock data), HMR sanity, AI bubble fallback string, and clean DevTools console were confirmed at 1200×800 before Task 5 proceeded.
 
-Resize both browser windows to **1200 × 800**. Place side-by-side.
+## Task 5 — Production build + static-serve verification (commit `f0d692b`)
 
-For EACH of the 8 sidebar pages, confirm visual identity between :5173 and :8090:
+```
+$ cd frontend-vite && pnpm build
+> vite build
+vite v5.4.21 building for production...
+transforming...
+✓ 43 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.66 kB │ gzip:  0.37 kB
+dist/assets/index-CPENLnjb.css   44.06 kB │ gzip:  8.20 kB
+dist/assets/index-Bgrs6aKr.js   250.23 kB │ gzip: 77.06 kB
+✓ built in 444ms
+```
 
-- [ ] Dashboard — sidebar entries, page header, project cards, layout-switching
-- [ ] Focus — single-project view, tasklist, terminal, browser preview
-- [ ] Folders — three-source columns (Local / VPS / GitHub), tree expand/collapse
-- [ ] Relations — Obsidian graph, node drag, filter legend
-- [ ] Terminals — 1 large + 5 small, collapsible project headers
-- [ ] Tools — n8n-style node graph + palette
-- [ ] Calendar — mini-cal + week view + event blocks
-- [ ] Analytics — token + time charts, tool breakdown, top actions
+### Gate checks (all green)
 
-For the Tweaks panel (open via the floating chrome on either build), cycle each axis and confirm both apps respond identically:
+| Gate                                              | Command                                                       | Result    |
+| ------------------------------------------------- | ------------------------------------------------------------- | --------- |
+| dist/index.html exists                            | `test -f dist/index.html`                                     | PASS      |
+| hashed JS chunk exists                            | `ls dist/assets/index-*.js` → `index-Bgrs6aKr.js` (250 KB)    | PASS      |
+| hashed CSS chunk exists                           | `ls dist/assets/index-*.css` → `index-CPENLnjb.css` (44 KB)   | PASS      |
+| POSITIVE: dist/index.html contains `./assets/`    | `grep -q './assets/' dist/index.html`                         | PASS      |
+| NEGATIVE: no absolute `/assets/` paths            | `! grep -qE '"/assets/' dist/index.html`                      | PASS      |
+| Static serve over port 5174                       | `python3 -m http.server 5174 -d dist` then `curl /`           | HTTP 200  |
+| Served HTML contains `<div id="root">`            | `curl /` then `grep -q '<div id="root">'`                     | PASS      |
+| Hashed JS asset reachable over 5174               | `curl /assets/index-Bgrs6aKr.js`                              | HTTP 200, 250,496 B |
+| Hashed CSS asset reachable over 5174              | `curl /assets/index-CPENLnjb.css`                             | HTTP 200, 44,063 B  |
+| No `@babel/standalone` / `text/babel` anywhere    | `grep -REn` excluding `node_modules`, `pnpm-lock.yaml`, `dist/` | PASS    |
+| No `window.X` / `Object.assign(window)` in src/   | `grep -REn '^window\.|^Object\.assign\(window' src`           | PASS      |
+| Legacy `frontend/`, `bin/`, `lib/` untouched      | `git status --porcelain frontend/ bin/ lib/`                  | empty     |
+| 5174 temporary server killed                      | `pkill -f "http.server 5174"`                                 | PASS      |
+| 5173 (Vite dev) still alive after Task 5          | `curl http://localhost:5173/`                                 | HTTP 200  |
+| 8090 (legacy) still alive after Task 5            | `curl http://localhost:8090/`                                 | HTTP 200  |
 
-- [ ] Accent: Per page / Amber / Cyan
-- [ ] Density: compact / comfy / spacious
-- [ ] Sidebar: expanded / collapsed
-- [ ] Dashboard Layout: bento / grid / kanban / list
-- [ ] Mock data: Personal projects / Client work (Dashboard project cards must change in BOTH apps)
+### dist/ summary
 
-Finally:
+| Path                                       | Size      | Gzip      |
+| ------------------------------------------ | --------: | --------: |
+| `frontend-vite/dist/index.html`            |   657 B   |   376 B   |
+| `frontend-vite/dist/assets/index-Bgrs6aKr.js` | 250,496 B | 77,066 B  |
+| `frontend-vite/dist/assets/index-CPENLnjb.css` | 44,063 B |  8,191 B  |
+| **Total `dist/`**                          | **296 KB** | n/a       |
 
-- [ ] AI bubble (bottom-right) opens; type any message → the fallback string `(couldn't reach the model — try again)` appears in BOTH apps (no Claude host present locally).
-- [ ] HMR sanity: edit a trivial `console.log` in `frontend-vite/src/pages/Dashboard.jsx`. The Vite tab module-reloads without a full refresh. Revert.
-- [ ] Browser DevTools console on :5173 — no red errors, no missing-module warnings. (React 18 StrictMode double-invoke warnings are expected and fine.)
+`dist/` is gitignored per `frontend-vite/.gitignore`; the build is fully reproducible from the committed `pnpm-lock.yaml` via:
 
-If anything diverges, list page + control + observed delta and the executor will fix on resume. If pixel-identical, reply `approved`.
+```bash
+cd frontend-vite && pnpm install --frozen-lockfile && pnpm build
+```
 
-## Task 5 (NOT YET RUN)
+The Task 5 commit is `--allow-empty` because it records a verification milestone — no source files changed (build output is gitignored).
 
-Production build (`pnpm build` → `dist/index.html` + hashed assets with relative paths) is **PENDING the human checkpoint**. The orchestrator will re-spawn this executor with `approved` to run Task 5.
+### Tauri-ready confirmation
+
+`dist/index.html` ships with relative asset paths:
+
+```html
+<script type="module" crossorigin src="./assets/index-Bgrs6aKr.js"></script>
+<link rel="stylesheet" crossorigin href="./assets/index-CPENLnjb.css">
+<body>
+  <div id="root"></div>
+```
+
+The `./assets/...` prefix (from `base: './'` in `vite.config.js`) means Tauri's resource loader resolves assets relative to wherever the embedded `index.html` lives in the bundled app — exactly what Phase 2 needs.
+
+## ROADMAP success criteria (all 4 satisfied)
+
+| # | Criterion                                                                       | Proof                                                                                |
+| - | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1 | `frontend-vite/` is a Vite + React 18 (TypeScript-optional) project             | `frontend-vite/package.json` (react 18.3.1, vite 5.4.21), `frontend-vite/vite.config.js` |
+| 2 | Every file in `frontend/` has a Vite-compatible equivalent under `frontend-vite/src/` | `src/{main,App,Icons,Data,AiChat,TweaksPanel,styles.css}` + `src/pages/{Dashboard,Focus,Folders,Relations,Terminals,Tools,Calendar,Analytics}.jsx` |
+| 3 | `pnpm dev` on :5173 with HMR; 8 pages identical to :8090                        | Operator-approved at Task 4 human-verify checkpoint (2026-05-26)                     |
+| 4 | `pnpm build` produces static `dist/` Tauri can bundle                           | `dist/index.html` references `./assets/...` (relative); standalone served on :5174 returns HTTP 200 with `<div id="root">` |
 
 ## Next-phase note (Phase 2 — Tauri shell)
 
-Phase 2 is unblocked the moment Task 5 succeeds. The Tauri config will be:
+Phase 2 is unblocked. The Tauri config will be:
 
 ```jsonc
 // src-tauri/tauri.conf.json
