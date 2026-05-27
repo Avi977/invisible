@@ -28,7 +28,7 @@
 
 Wave 1 (parallel, no file overlap):
 - [x] INV-01-01-local-walker-and-watcher-PLAN.md — `lib/api/tree_local.py` (walker + SSE watcher, polling fallback if watchdog absent) — done 2026-05-27, commits c7cb09e, 1ba48fa
-- [ ] INV-01-02-vps-and-github-walkers-PLAN.md — `lib/api/tree_vps.py` (503 graceful-degradation), `lib/api/tree_repo.py` (60s gh-api cache)
+- [x] INV-01-02-vps-and-github-walkers-PLAN.md — `lib/api/tree_vps.py` (503 graceful-degradation), `lib/api/tree_repo.py` (60s gh-api cache) — done 2026-05-27, commits baf1628, 3224bed
 
 Wave 2:
 - [ ] INV-01-03-frontend-wiring-and-routes-PLAN.md — `lib/api/__init__.py` (package marker), `bin/invisible-dashboard` (3 route branches + SSE), `frontend/pages/folders.jsx` (fetch + EventSource). Ends with a human-verify checkpoint for the 5-second SSE latency.
@@ -38,7 +38,7 @@ Wave 2:
 | Plan | Status | PLAN tasks | SUMMARY tasks | Commits |
 |------|--------|-----------|---------------|---------|
 | INV-01-01 | Done | 2 | 2 | c7cb09e, 1ba48fa |
-| INV-01-02 | Pending | — | — | — |
+| INV-01-02 | Done | 2 | 2 | baf1628, 3224bed |
 | INV-01-03 | Pending | — | — | — |
 
 ## Files this workstream OWNS
