@@ -267,3 +267,17 @@ Verified existence of all created files and commit hashes:
 - All 8 PLAN.md `<verification>` grep gates: PASS
 - No `frontend-vite/src/*.jsx` files modified across the 4 commits: VERIFIED via `git diff a6e4007..HEAD --name-only -- 'frontend-vite/src/*.jsx'` → empty
 - No files under `frontend/`, `bin/`, `lib/` modified: VERIFIED via `git status --porcelain`
+
+## Self-Check (Task 6): PASSED
+
+Re-verified after the Task 6 commits:
+
+- `README.md` (modified, "Tauri shell (Phase 2 — preview)" section added): FOUND
+- `CHANGELOG.md` (regenerated, all 5 INV-02 commits + 2 fix commits listed): FOUND
+- `INV-02-01-SUMMARY.md` (this file, Task 5 Verification + Task 6 outcomes appended): FOUND
+- `PHASE-VERIFICATION.md` (new, 4 ROADMAP success criteria proven): FOUND
+- Commit `b6551d0` (feat: tauri shell with tray + 5 commands + SSE bridge): FOUND in `git log`
+- Commit `1e1891f` (docs: update CHANGELOG): FOUND in `git log`
+- All 8 `<verify><automated>` gates from PLAN.md Task 6: PASS
+- No-touch zones (`frontend/`, `bin/`, `lib/`, `frontend-vite/src/*.jsx`): unchanged across the 7 phase-INV-02 commits
+- `cargo build` in `src-tauri/`: SUCCESS, 0.82 s incremental at HEAD `1e1891f`
