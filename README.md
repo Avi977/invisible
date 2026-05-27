@@ -35,6 +35,12 @@ same code runs identically on every machine.
 - `invisible-dashboard` — server-rendered HTML + JSON API on `127.0.0.1:8765` (the React frontend's data backend)
 - `invisible-server` — VPS-side daemon mirroring the dashboard remotely
 
+### Tauri shell (Phase 2 — preview)
+
+A native desktop shell built on **Tauri 2.x** lives in [`src-tauri/`](./src-tauri/) and loads the Vite-built `frontend-vite/dist/` into a system webview. Develop against it with `cd src-tauri && cargo tauri dev` — Tauri's `beforeDevCommand` spins up the Vite dev server on `localhost:5173` before opening the native window, so HMR works end-to-end. A local release `.app` is produced with `cargo tauri build`, which drops `target/release/bundle/macos/Invisible.app`. Requires `rustc` 1.95+ and `cargo-tauri` 2.11.x (install with `cargo install tauri-cli@2.11.2 --locked` if you don't already have the CLI).
+
+The shell exposes 5 Rust `#[tauri::command]` wrappers around the existing CLI surface — `list_projects`, `run_orchestrator`, `kill_run`, `tail_log`, `status` — registered through `tauri::generate_handler!` in `src-tauri/src/lib.rs` and gated by an explicit `shell:allow-execute` allow-list in `src-tauri/capabilities/default.json` (no wildcards: only `invisible-status`, `invisible-review`, `invisible-ps`, `invisible-log` are reachable from the frontend). A background SSE bridge subscribes to `${INVISIBLE_SERVER_URL or http://127.0.0.1:8765}/api/stream` and forwards events onto Tauri's `dashboard:event` bus; when the local `invisible-dashboard` returns 404 (it does), the bridge transparently falls back to polling `/api/projects` every 5 s with exponential backoff (1 s → 2 s → 5 s → 10 s capped). Bridge code lives in `src-tauri/src/sse.rs`; the thin ESM frontend wrapper is `frontend-vite/src/lib/tauri.js`. **Status: preview.** `bin/invisible-app` (pywebview + pystray) remains the default desktop wrapper and is still operational. Phase 3 will produce the signed Windows `.msi`, code-sign the macOS `.app`, wire the auto-updater, and switch the default away from pywebview.
+
 ---
 
 ## Architecture
