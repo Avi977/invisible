@@ -22,3 +22,32 @@ client = "personal"
 repo_path = "~/Projects/jobslayer"
 # vps_repo_path  = "/srv/jobslayer"   # set later if you want VPS handoff
 max_iters = 3
+
+# ── Terminals ───────────────────────────────────────────────────────────
+# Per-pane config consumed by `bin/invisible-pty` at startup. Each
+# `[[terminals]]` block describes one pane the daemon will accept on
+# `ws://127.0.0.1:8091/pty/{id}`. Panes whose `id` isn't listed here fall
+# back to a default plain-bash pane in your home dir.
+#
+# Required fields:
+#   id    must match ^[a-z0-9_-]{1,32}$ (lowercase letters, digits, `_`, `-`)
+#   kind  one of "bash" or "ssh"
+#
+# Optional fields:
+#   cwd   string, ~/... allowed (expanded at spawn time)
+#   env   table of strings (overlays os.environ for this pane only)
+#
+# kind = "ssh" additionally requires:
+#   host  string — passed as `ssh <host>`. Host comes from THIS file ONLY;
+#         the frontend cannot override it via the WebSocket URL or query
+#         string. See 02-PLAN.md threat-model T-02-01.
+
+[[terminals]]
+id = "local-1"
+kind = "bash"
+cwd = "~/code"
+
+[[terminals]]
+id = "vps-srv"
+kind = "ssh"
+host = "srv982719"
