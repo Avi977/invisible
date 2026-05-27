@@ -7,10 +7,10 @@ last_updated: 2026-05-26
 # Project State
 
 ## Current Position
-**Status:** Phase 01 code complete — human-verify + CORS follow-up deferred (user moved on)
+**Status:** Phase 01 verified working — happy path + history-persistence checks pass in playwright. CORS fix shipped. UAT checks 3-6 still pending.
 **Current Phase:** 01-api-v1-chat-end-to-end
 **Last Activity:** 2026-05-26
-**Last Activity Description:** Phase 01 code shipped (both plans implemented). Task 2 of plan 02 (the 6-check browser UAT) and the predicted CORS dashboard fix were explicitly deferred at user request. See `phases/INV-01-api-v1-chat-end-to-end/FOLLOWUPS.md` for the resume checklist before `/gsd:ship`.
+**Last Activity Description:** Debug session uncovered + fixed two issues: (a) frontend daemon was serving from `~/.invisible/` (main checkout, OLD code) instead of the workstream worktree — fixed by restarting with `INVISIBLE_HOME=$(pwd)`, (b) dashboard daemon missing CORS preflight + headers — fixed by adding `do_OPTIONS` + `end_headers` override to `bin/invisible-dashboard`. Playwright then confirmed real Claude responses + `msgs` history in the bubble. See `phases/INV-01-api-v1-chat-end-to-end/FOLLOWUPS.md` for remaining UAT.
 
 ## Progress
 **Phases Complete:** 0 (of 1)

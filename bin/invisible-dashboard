@@ -217,6 +217,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002, ARG002
         return
 
+    # CORS: the AI bubble (served by invisible-frontend on :8090) fetches
+    # /api/v1/chat from this daemon on :8765 — different origin, so the
+    # browser preflights and gates on these headers. `*` is safe because we
+    # never send Access-Control-Allow-Credentials and --no-auth is pinned
+    # to 127.0.0.1; the dashboard cannot be reached cross-origin from outside
+    # localhost without bearer-token auth.
+    def end_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        super().end_headers()
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        # Preflight is unauthenticated by spec — browsers cannot attach the
+        # Authorization header on the preflight itself. The follow-up POST
+        # still goes through _auth_ok() in do_POST.
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     # ---- auth ----
     def _token_from_request(self) -> str | None:
         hdr = self.headers.get("Authorization", "")
