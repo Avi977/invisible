@@ -36,6 +36,7 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-02:** record Task 6 self-check in SUMMARY (0c25136)
 - complete INV-01-01 summary (e33b516)
 - **INV-01-01:** summary at Task 4 checkpoint (Tasks 1-3 complete) (a14832e)
 
