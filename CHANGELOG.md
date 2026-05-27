@@ -15,6 +15,11 @@ overwritten on the next push.
 
 ### Features
 
+- **INV-02:** tauri shell with tray + 5 commands + SSE bridge (b6551d0)
+- **INV-02:** SSE bridge with polling fallback + frontend-vite/src/lib/tauri.js (83d9683)
+- **INV-02:** system tray and close-to-hide window event (688ad19)
+- **INV-02:** five Tauri commands wrapping CLI surface (016821e)
+- **INV-02:** scaffold src-tauri/ Tauri 2.x project (1b4742a)
 - **INV-01-01:** port 8 page modules to ESM with PascalCase filenames (25248ff)
 - **INV-01-01:** port 5 shared modules to ESM (Icons, Data, AiChat, TweaksPanel, App) (f57b943)
 - **INV-01-01:** bootstrap frontend-vite scaffold (Vite 5 + React 18.3.1) (d9dc93f)
@@ -24,6 +29,8 @@ overwritten on the next push.
 
 ### Bug Fixes
 
+- **tauri:** also update tauri.conf.json (companion to 0d56203 plan-doc fix) (eb39d5f)
+- **tauri:** beforeDevCommand cwd is project root, not src-tauri/ (0d56203)
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
 - skip self-update commits in changelog generator (1c9d5a8)
 
