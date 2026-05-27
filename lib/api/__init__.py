@@ -18,22 +18,15 @@ Contract:
 from __future__ import annotations
 
 from . import projects
+from . import chat        # noqa: F401  (ai-bubble: POST /api/v1/chat)
+from . import tree_local  # noqa: F401  (folders: GET /api/v1/tree/local + SSE)
+from . import tree_vps    # noqa: F401  (folders: GET /api/v1/tree/vps)
+from . import tree_repo   # noqa: F401  (folders: GET /api/v1/tree/repo)
+from . import analytics   # noqa: F401  (analytics: GET /api/v1/analytics)
 
 # Path → handler callable. Sister workstreams add their entries below this line.
 ROUTES: dict = {
     "/api/v1/projects": projects.handle_projects,
 }
 
-__all__ = ["ROUTES", "projects"]
-"""API submodules consumed by bin/invisible-dashboard.
-
-Each submodule is responsible for a single data source / capability. The
-dashboard's do_GET / do_POST wires them into HTTP routes; the submodules
-themselves are transport-agnostic (with the documented exception of
-tree_local.stream_diffs, which writes SSE chunks directly to the handler's
-wfile).
-"""
-from . import chat        # noqa: F401  (ai-bubble: POST /api/v1/chat)
-from . import tree_local  # noqa: F401  (folders: GET /api/v1/tree/local + SSE)
-from . import tree_vps    # noqa: F401  (folders: GET /api/v1/tree/vps)
-from . import tree_repo   # noqa: F401  (folders: GET /api/v1/tree/repo)
+__all__ = ["ROUTES", "projects", "chat", "tree_local", "tree_vps", "tree_repo", "analytics"]
