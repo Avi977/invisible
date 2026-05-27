@@ -339,11 +339,10 @@ def _keepalive_bytes() -> bytes:
 def _send_sse_headers(handler: Any) -> None:
     """Emit the SSE response header block.
 
-    The ``Access-Control-Allow-Origin: *`` header is REQUIRED — the
-    frontend runs on :8090 and the dashboard on :8765, so EventSource
-    requests are cross-origin. Without this header the browser silently
-    blocks the connection. This mirrors the BLOCKER #1 fix that Plan 03
-    adds to ``_send_json`` for the regular JSON endpoints.
+    Cross-origin CORS headers (``Access-Control-Allow-Origin: *`` etc.)
+    are supplied by the dashboard handler's ``end_headers()`` override —
+    do NOT add them here; duplicate ACAO headers are rejected by the CORS
+    spec, breaking the EventSource subscription from the frontend on :8090.
 
     ``X-Accel-Buffering: no`` defeats nginx's response buffering for any
     future proxy in front of the daemon.
@@ -353,7 +352,6 @@ def _send_sse_headers(handler: Any) -> None:
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("Connection", "keep-alive")
     handler.send_header("X-Accel-Buffering", "no")
-    handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
 
 
