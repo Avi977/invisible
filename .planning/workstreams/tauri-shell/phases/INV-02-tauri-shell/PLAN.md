@@ -398,8 +398,8 @@ Step 5 — Create `src-tauri/tauri.conf.json`. Use Tauri 2 schema (NOT Tauri 1's
   "build": {
     "devUrl": "http://localhost:5173",
     "frontendDist": "../frontend-vite/dist",
-    "beforeDevCommand": "cd ../frontend-vite && pnpm dev",
-    "beforeBuildCommand": "cd ../frontend-vite && pnpm build"
+    "beforeDevCommand": "cd frontend-vite && pnpm dev",
+    "beforeBuildCommand": "cd frontend-vite && pnpm build"
   },
   "app": {
     "withGlobalTauri": true,
