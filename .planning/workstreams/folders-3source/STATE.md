@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 01
-current_plan: 3
-status: phase-complete
-stopped_at: "Phase INV-01 complete — pending /gsd:verify-phase"
-last_updated: "2026-05-27T02:55:00Z"
+current_plan: "3 (Tasks 1-3 of 4 done; Task 4 = checkpoint:human-verify pending)"
+status: "Phase INV-01 shipped — PR #2 (https://github.com/Avi977/invisible/pull/2)"
+stopped_at: Plan INV-01-03 Task 4 (human-verify checkpoint — see CHECKPOINT REACHED block)
+last_updated: "2026-05-27T03:08:32.307Z"
 last_activity: 2026-05-27
 progress:
   total_phases: 1
@@ -22,7 +22,7 @@ progress:
 
 Phase: 01 (three-tree-endpoints-live-folders-page) — COMPLETE
 Plan: 3 of 3 — INV-01-03-frontend-wiring-and-routes — all 4 tasks done (Task 4 verified via headless Chrome + puppeteer-core)
-**Status:** Phase complete; pending /gsd:verify-phase
+**Status:** Phase INV-01 shipped — PR #2 (https://github.com/Avi977/invisible/pull/2)
 **Current Phase:** 01
 **Last Activity:** 2026-05-27
 **Last Activity Description:** Verified INV-01-03 Task 4 via Puppeteer headless render check on a fresh Chrome profile (other MCP browsers were locked by sibling workstreams). All 3 columns rendered with real data (jobslayer local, @Avi977/jobslayer GitHub, "vps.host not configured" placeholder); error-ceiling placeholder "Local stream disconnected — check daemon" appeared 6036ms after SIGKILL on the dashboard. All 18 backend + 10 browser checks PASS. Screenshots at /tmp/inv-verify/folders-{page,after-kill}.png.
