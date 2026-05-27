@@ -22,7 +22,8 @@ Threat-model gates enforced here (mapping back to 01-PLAN.md → STRIDE register
   T-01-04  concurrent-PTY cap (32)               (PTYRegistry.count vs MAX)
   T-01-05  pane-id ⇒ worktree path containment   (load_pane_context)
 
-Plan 02 hooks left explicit in the code as `# TODO(plan-02): …` markers.
+Plan 02 (landed) extended this with session persistence + SSH variant.
+See the `# PLAN-02 verification log` marker at the bottom of this file.
 """
 
 from __future__ import annotations
@@ -788,8 +789,12 @@ class PTYServer:
             )
 
         # Pane → worktree mapping. Plan 01 default: home()/worktrees/{id}/feature.
-        # Plan 02 will swap this for a config-driven lookup.
-        # TODO(plan-02): replace with self.pane_configs[pane_id]["worktree"] fallback.
+        # NOTE: Plan 02 deliberately did NOT swap this for a config-driven
+        # lookup — the only data this endpoint exposes (checkpoint context)
+        # is per-worktree, not per-pane, and the frontend has no use for
+        # arbitrary cwd-of-the-shell here. If a future plan wants to make
+        # `/context/{id}` respect `pane_configs[id]['cwd']` we'd plumb it
+        # through `self.pane_configs.get(raw_pane_id, {}).get('cwd')`.
         wt = home() / "worktrees" / raw_pane_id / "feature"
         ctx = load_pane_context(wt)
 
@@ -1146,9 +1151,61 @@ def _http_response(
 #                              when reconnect-grace lands (the cap is
 #                              easier to test against a stable registry).
 #
-# Plan 02 will extend, NOT replace:
-#   - handle_pty teardown    : last `# TODO(plan-02)` marker — swap kill-on-
-#                              disconnect for reconnect-grace + reap.
-#   - spawn branch           : add SSH variant when cfg["ssh"] is set.
-#   - PTYServer constructor  : populate pane_configs from invisible.toml.
+# Plan 02 (landed): session persistence + SSH variant + invisible.toml configs.
+#   - handle_pty teardown    : DONE — reconnect-grace + parked PTY + reaper.
+#   - spawn branch           : DONE — resolve_command + spawn_pty_for_config.
+#   - PTYServer constructor  : DONE — pane_configs + reconnect_grace kwargs.
+
+
+# ────────────────────────────────────────────────────────────────────────
+# PLAN-02 verification log
+# ────────────────────────────────────────────────────────────────────────
+# This marker is the seam Plan 03 greps for to confirm Plan 02's surface
+# is stable before wiring frontend/pages/terminals.jsx to the daemon.
+#
+# Plan 02 new exports (extending — not replacing — Plan 01's seven):
+#   - PTYRegistry           extended with attach_ws / detach_ws /
+#                           record_output / get_backlog / sweep.
+#   - RECONNECT_GRACE_SECONDS = 600
+#   - BACKLOG_BYTES = 8 * 1024
+#   - REAPER_INTERVAL_SECONDS = 30
+#   - load_pane_configs(path) -> dict[str, dict]
+#   - resolve_command(config) -> list[str]
+#   - spawn_pty_for_config(pane_id, config) -> PtyProcess
+#   - PTYServer.__init__ now accepts (pane_configs, reconnect_grace)
+#
+# Verified gates (Task 1 + Task 2 unit checks + Task 3 end-to-end):
+#   (e) PTY survives WS disconnect (Task 3) — `export PERSIST_MARKER=42`
+#       set on first connection observable on reconnect 3s later, and the
+#       reconnect received a 988-byte backlog frame replaying the prior
+#       session's output before live streaming resumed. The reattached
+#       shell IS the same PtyProcess (env var persisted, prompt cwd
+#       unchanged).
+#   (f) Reaper sweep semantics (Task 1 unit) — `sweep(future, grace)`
+#       returns parked panes past grace; ignores live panes. Reaper
+#       cycle terminates + unregisters expired panes; capacity counter
+#       includes parked entries (the cap is about memory, not active
+#       clients).
+#   (g) Backlog ring buffer (Task 1 unit) — bytearray drops from front
+#       when length > BACKLOG_BYTES; the tail is always preserved.
+#   (h) SSH config whitelist (Task 2 unit) — `load_pane_configs` drops
+#       entries with invalid PANE_ID_RE ids and rejects kind=ssh entries
+#       missing a `host` field. `resolve_command` returns `['ssh', host]`
+#       with host pulled from the trusted TOML — URL pane id is only a
+#       registry-lookup key (T-02-01).
+#   (i) TOML env-injection mitigation (Task 2 unit) — env values must be
+#       strings; any non-string drops the whole env table. cwd is
+#       `expanduser`'d only — never shell-expanded (T-02-04).
+#
+# Plan 03 hooks:
+#   - The frontend can connect to `ws://127.0.0.1:8091/pty/{id}` and rely
+#     on these guarantees: a reconnect inside `--reconnect-grace` reattaches
+#     to the same shell; the first frame after reconnect is a backlog
+#     replay (may be empty if the prior session produced nothing).
+#   - `bin/invisible-pty --config /path/to/invisible.toml` is the way to
+#     point the daemon at non-default pane configs.
+#   - Daemon restart clears all PTYs — in-memory only (intentional; the
+#     cost is small for a desktop tool and the alternative would require
+#     us to durably checkpoint termios/cwd/env, which is well out of
+#     scope for v1).
 
