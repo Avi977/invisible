@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 1
-current_plan: 2
-status: phase_complete
-stopped_at: phase 1 complete — both plans shipped
-last_updated: "2026-05-27T03:05:00Z"
-last_activity: 2026-05-27
+current_plan: — (workstream phase 1 done)
+status: "Phase 1 shipped — PR #6"
+stopped_at: Phase 1 complete — workstream dashboard-wiring fully shipped
+last_updated: "2026-05-27T03:27:32.095Z"
+last_activity: 2026-05-26
 progress:
   total_phases: 1
   completed_phases: 1
@@ -22,9 +22,9 @@ progress:
 
 Phase: 1 (Real /api/v1/projects end-to-end) — COMPLETE
 Plan: 2 of 2 — COMPLETE
-**Status:** Phase 1 complete — backend adapter + frontend wiring both shipped
+**Status:** Phase 1 shipped — PR #6
 **Current Phase:** 1
-**Last Activity:** 2026-05-27
+**Last Activity:** 2026-05-26
 **Last Activity Description:** 01-02 complete — Dashboard self-fetches /api/v1/projects on mount, real `jobslayer` card visually verified via headless Chrome, error path verified, CORS confirmed loopback-only echo, app.jsx untouched (clean 6-way sister-workstream merge surface)
 
 ## Progress
