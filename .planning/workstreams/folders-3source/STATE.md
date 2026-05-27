@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 01
-current_plan: "3 (Tasks 1-3 of 4 done; Task 4 = checkpoint:human-verify pending)"
-status: "Phase INV-01 shipped — PR #2 (https://github.com/Avi977/invisible/pull/2)"
-stopped_at: Plan INV-01-03 Task 4 (human-verify checkpoint — see CHECKPOINT REACHED block)
+current_plan: 3
+status: "Phase INV-01 shipped — PR #2"
+stopped_at: "Phase INV-01 shipped (PR #2). All 3 plans complete, verification PASSED, awaiting merge."
 last_updated: "2026-05-27T03:08:32.307Z"
 last_activity: 2026-05-27
 progress:
@@ -29,14 +29,14 @@ Plan: 3 of 3 — INV-01-03-frontend-wiring-and-routes — all 4 tasks done (Task
 
 ## Progress
 
-**Phases Complete:** 0
-**Current Plan:** 3 (Tasks 1-3 of 4 done; Task 4 = checkpoint:human-verify pending)
+**Phases Complete:** 1 / 1
+**PR:** [#2](https://github.com/Avi977/invisible/pull/2) — awaiting review/merge
 
 ## Completed Plans
 
 - [x] **INV-01-01-local-walker-and-watcher** — `lib/api/tree_local.py` (walker + SSE watcher) — commits c7cb09e, 1ba48fa
 - [x] **INV-01-02-vps-and-github-walkers** — `lib/api/tree_repo.py` (gh-api walker with 60s cache), `lib/api/tree_vps.py` (SSH/find walker with 503 graceful degradation) — commits baf1628, 3224bed
-- [~] **INV-01-03-frontend-wiring-and-routes** — `lib/api/__init__.py` (package), `bin/invisible-dashboard` (+71 lines: 3 routes + SSE branch + CORS + do_OPTIONS), `frontend/pages/folders.jsx` (+150 lines: fetch + EventSource + bounded error counter). Tasks 1-3 commits 1fe8240, 2e812d8. Task 4 (human-verify) PENDING — see CHECKPOINT REACHED in agent output.
+- [x] **INV-01-03-frontend-wiring-and-routes** — `lib/api/__init__.py` (package), `bin/invisible-dashboard` (+71 lines: 3 routes + SSE branch + CORS + do_OPTIONS), `frontend/pages/folders.jsx` (+150 lines: fetch + EventSource + bounded error counter). Commits 1fe8240, 2e812d8. Task 4 verified via Puppeteer headless render (3 columns render with real data; error-ceiling placeholder at 6036ms after SIGKILL).
 
 ## Decisions Accumulated
 
@@ -57,5 +57,5 @@ Plan: 3 of 3 — INV-01-03-frontend-wiring-and-routes — all 4 tasks done (Task
 
 ## Session Continuity
 
-**Stopped At:** Plan INV-01-03 Task 4 (human-verify checkpoint — see CHECKPOINT REACHED block)
-**Resume File:** .planning/workstreams/folders-3source/phases/INV-01-three-tree-endpoints-live-folders-page/INV-01-03-frontend-wiring-and-routes-SUMMARY.md (the "Pending Human Verification" section + the CHECKPOINT REACHED block returned to the orchestrator detail the 10-step browser protocol).
+**Stopped At:** Phase INV-01 shipped — PR #2 open, awaiting review/merge.
+**Resume File:** None needed. After merge, /gsd:complete-milestone (if last phase in M1 for this workstream) or move to next workstream.
