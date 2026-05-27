@@ -69,7 +69,17 @@ pub fn run() {
                 }
             });
 
-            // SSE bridge spawn — added in Task 4.
+            // ── SSE bridge (long-lived background task) ──────────────
+            // Resolves $INVISIBLE_SERVER_URL else http://127.0.0.1:8765;
+            // tries SSE first, falls back to polling /api/projects on
+            // 404 (the local invisible-dashboard does not expose
+            // /api/stream today). Exponential backoff capped at 10s on
+            // connection errors. Never panics; loop is infinite.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                crate::sse::run_bridge(app_handle).await;
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())
