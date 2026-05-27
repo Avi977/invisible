@@ -52,7 +52,9 @@ Thumbs.db
 # ── Tauri / Node (future UI shell) ─────────────────────────────────────
 node_modules/
 src-tauri/target/
-src-tauri/Cargo.lock
+# Cargo.lock is INTENTIONALLY committed for the binary crate
+# (Rust convention; Phase 3's signed/notarised macOS builds need
+# reproducible deps). Do not re-add it here.
 dist/
 *.dmg
 *.msi
