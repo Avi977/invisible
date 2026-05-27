@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""invisible-pty — local WebSocket PTY daemon for the Terminals page.
+
+What it serves:
+  - ws://127.0.0.1:8091/pty/{pane_id}     one real bash PTY per connection
+                                          (bidirectional bytes; up to 32
+                                          concurrent PTYs by default)
+  - http://127.0.0.1:8091/context/{id}    side-channel JSON: per-pane
+                                          checkpoint context for the
+                                          frontend's ContextHeader (goal,
+                                          recent activity, next steps).
+
+Intended client: `frontend/pages/terminals.jsx` running under
+`bin/invisible-frontend` on 127.0.0.1:8090. The Origin allow-list in the
+daemon is pinned to that exact origin pair — see lib/pty_server.py.
+
+Threat-model gates enforced (see 01-PLAN.md STRIDE register):
+  - Pane-id whitelist `^[a-z0-9_-]{1,32}$` BEFORE any PTY spawn
+  - Origin pinning to http://127.0.0.1:8090 / http://localhost:8090
+  - Host bind restricted to {127.0.0.1, localhost, ::1}
+  - Concurrent-PTY cap (32) at the registry layer
+  - Clear stderr + exit 2 if --host is outside the loopback set
+  - Clean import-time error (no silent fallback) if `websockets` or
+    `ptyprocess` are missing
+
+Usage:
+    invisible-pty                     # 127.0.0.1:8091, default
+    invisible-pty --port 8091         # explicit port
+    invisible-pty --host localhost    # equivalent loopback variant
+    invisible-pty --host 0.0.0.0      # REJECTED — daemon exits 2
+
+This entrypoint mirrors `bin/invisible-dashboard`'s shape:
+  HERE → sys.path insert → import server module → argparse → main() → SystemExit.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+# Imports below this point come from $HERE/../lib via the path insert above.
+# pty_server is the module Plan 01 just created; validate_host is its
+# loopback-only host guard.
+from pty_server import PTYServer, validate_host  # noqa: E402
+
+# TODO(plan-02): the daemon will likely want `load_env()` from lib/config.py
+# once Plan 02 wires invisible.toml [[terminals]] config loading here. Leaving
+# the import out of Plan 01 to keep the surface minimal.
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog="invisible-pty",
+        description=(
+            "WebSocket PTY daemon for the invisible Terminals page. "
+            "Binds 127.0.0.1:8091 by default and spawns one bash PTY per "
+            "ws://127.0.0.1:8091/pty/{pane_id} connection."
+        ),
+    )
+    ap.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="interface to bind (must be loopback: 127.0.0.1, localhost, or ::1)",
+    )
+    ap.add_argument(
+        "--port",
+        type=int,
+        default=8091,
+        help="TCP port to listen on (default 8091)",
+    )
+    args = ap.parse_args()
+
+    # T-01-03 host-binding gate. Surface a clear stderr line and exit 2 on
+    # failure — matches bin/invisible-dashboard's `return 2` convention.
+    try:
+        validate_host(args.host)
+    except ValueError as e:
+        print(
+            f"[invisible-pty] {e}: --host must be 127.0.0.1, localhost, or ::1",
+            file=sys.stderr,
+        )
+        return 2
+
+    # TODO(plan-02): load_env() + read [[terminals]] entries from invisible.toml
+    # to populate pane_configs (cwd, env, command, ssh) before construction.
+    server = PTYServer(host=args.host, port=args.port)
+    server.serve()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
