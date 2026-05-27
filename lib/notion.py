@@ -132,7 +132,10 @@ def now_iso() -> str:
 
 def log_review(*, project_id: str | None, iteration: int, agent: str,
                verdict: str, summary: str, body_md: str,
-               diff_sha: str = "") -> dict | None:
+               diff_sha: str = "",
+               usage: dict | None = None,
+               started_at: str | None = None,
+               completed_at: str | None = None) -> dict | None:
     db = _db("reviews")
     if not db:
         return None
@@ -148,6 +151,21 @@ def log_review(*, project_id: str | None, iteration: int, agent: str,
     }
     if project_id:
         props["Project"] = _relation([project_id])
+    if usage:
+        if usage.get("input_tokens") is not None:
+            props["Input tokens"] = _number(int(usage["input_tokens"]))
+        if usage.get("output_tokens") is not None:
+            props["Output tokens"] = _number(int(usage["output_tokens"]))
+        if usage.get("cache_read_input_tokens") is not None:
+            props["Cache read tokens"] = _number(int(usage["cache_read_input_tokens"]))
+        if usage.get("cache_creation_input_tokens") is not None:
+            props["Cache creation tokens"] = _number(int(usage["cache_creation_input_tokens"]))
+        if usage.get("cost_usd") is not None:
+            props["Cost USD"] = _number(float(usage["cost_usd"]))
+    if started_at:
+        props["Started"] = _date(started_at)
+    if completed_at:
+        props["Completed"] = _date(completed_at)
     return _request("POST", "/pages", {
         "parent": {"database_id": db},
         "properties": props,
@@ -318,3 +336,43 @@ def query_recent_reviews(hours: int = 24, *, project_id: str | None = None,
         }
     r = _request("POST", f"/databases/{db}/query", body)
     return r.get("results", []) if r else []
+
+
+def query_reviews_since(since_iso: str, *, project_id: str | None = None,
+                        page_size: int = 100) -> list[dict]:
+    """All Reviews rows created on or after since_iso, newest first.
+    Paginates via start_cursor until has_more is False. If project_id is
+    given, filters to that project's relation. Additive helper for the
+    analytics aggregator (REQ-05)."""
+    db = _db("reviews")
+    if not db:
+        return []
+    page_size = min(max(page_size, 1), 100)
+    date_filter = {"property": "Created", "date": {"on_or_after": since_iso}}
+    if project_id:
+        filter_clause = {
+            "and": [
+                date_filter,
+                {"property": "Project", "relation": {"contains": project_id}},
+            ]
+        }
+    else:
+        filter_clause = date_filter
+    body: dict = {
+        "sorts": [{"property": "Created", "direction": "descending"}],
+        "page_size": page_size,
+        "filter": filter_clause,
+    }
+    results: list[dict] = []
+    while True:
+        r = _request("POST", f"/databases/{db}/query", body)
+        if not r:
+            break
+        results.extend(r.get("results", []))
+        if not r.get("has_more"):
+            break
+        next_cursor = r.get("next_cursor")
+        if not next_cursor:
+            break
+        body["start_cursor"] = next_cursor
+    return results
