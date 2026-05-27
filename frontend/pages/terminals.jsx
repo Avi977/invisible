@@ -1,80 +1,35 @@
-// Terminals — 1 large + 5 small. Each terminal has a collapsible project header
-// showing summary + recent activity + current goal/next steps.
+// Terminals — 1 large + 5 small. Each pane mounts a real xterm.js Terminal
+// connected to the local PTY daemon over WebSocket.
+//
+// Requires bin/invisible-pty running on 127.0.0.1:8091. See START_HERE.md.
+//
+// Daemon contract (Plans 01 + 02):
+//   - WS  ws://127.0.0.1:8091/pty/{pane_id}  — bidirectional text frames.
+//                                              client → daemon: keystrokes.
+//                                              daemon → client: PTY output.
+//                                              On reconnect inside the daemon's
+//                                              grace window (default 600s), the
+//                                              first frame is the backlog replay.
+//   - GET http://127.0.0.1:8091/context/{pane_id}  → {goal, activity, next} or {}
+//
+// Whether a given pane id resolves to bash or ssh is decided server-side by
+// the daemon's `invisible.toml [[terminals]]` blocks (Plan 02). The frontend
+// only ever names panes by id; `kind` and `host` are server config.
 
 const { useState: useStateT, useRef: useRefT, useEffect: useEffectT } = React;
 
-const TERM_PRESETS = [
-  {
-    title: "echo · ios",
-    cwd: "~/code/echo/ios",
-    lines: [
-      { t: "prompt", c: "swift build", path: "~/code/echo/ios" },
-      { t: "ok",  c: "Building for iOS Simulator…" },
-      { t: "dim", c: "[1/12] Compiling Recorder.swift" },
-      { t: "dim", c: "[7/12] Compiling Whisper.swift" },
-      { t: "warn", c: "warning: deprecated AVAudioSessionInterruptionTypeKey" },
-      { t: "ok",  c: "Build complete! (4.21s)" },
-      { t: "prompt", c: "xcrun simctl boot iPhone15", path: "~/code/echo/ios" },
-    ],
-  },
-  {
-    title: "lumen · dev",
-    cwd: "~/code/lumen",
-    lines: [
-      { t: "prompt", c: "pnpm dev", path: "~/code/lumen" },
-      { t: "dim", c: "› next dev --turbo" },
-      { t: "ok",  c: "▲ Next.js 14.2.3 ·  Local: http://localhost:3000" },
-      { t: "ok",  c: "✓ Ready in 1.2s" },
-      { t: "dim", c: "○ Compiling /dashboard …" },
-      { t: "ok",  c: "✓ Compiled /dashboard in 380ms" },
-    ],
-  },
-  {
-    title: "drift · build",
-    cwd: "~/code/drift",
-    lines: [
-      { t: "prompt", c: "astro build", path: "~/code/drift" },
-      { t: "dim", c: "12:42:18 [build] output: \"static\"" },
-      { t: "ok",  c: "▶ /index.html        (15ms)" },
-      { t: "ok",  c: "▶ /waitlist          (22ms)" },
-      { t: "ok",  c: "▶ /privacy           (8ms)" },
-      { t: "ok",  c: "✓ Completed in 1.84s" },
-    ],
-  },
-  {
-    title: "atlas · k3s",
-    cwd: "ssh fsn1",
-    lines: [
-      { t: "prompt", c: "kubectl get pods -A", path: "fsn1:/srv/atlas" },
-      { t: "dim", c: "NAMESPACE     NAME                    READY   STATUS    AGE" },
-      { t: "dim", c: "argocd        argocd-server-7f8       1/1     Running   3d" },
-      { t: "dim", c: "ferry         ferry-69d97cbb56-2bx    1/1     Running   12h" },
-      { t: "dim", c: "lumen-stage   lumen-7d6f9-x          1/1     Running   45m" },
-      { t: "err", c: "kube-system   metrics-server-7s      0/1     CrashLoop 8m" },
-    ],
-  },
-  {
-    title: "rune · python",
-    cwd: "~/code/rune",
-    lines: [
-      { t: "prompt", c: "python pair.py --font Inter.ttf", path: "~/code/rune" },
-      { t: "dim", c: "Loading Inter.ttf … 18 axes detected" },
-      { t: "dim", c: "Generating 12 weight pairs" },
-      { t: "dim", c: "Querying Claude for ratings…" },
-      { t: "ok",  c: "✓ Saved pairings.json" },
-    ],
-  },
-  {
-    title: "ferry · logs",
-    cwd: "ssh fsn1",
-    lines: [
-      { t: "prompt", c: "tail -f /var/log/ferry.log", path: "fsn1:/var/log" },
-      { t: "ok",  c: "[12:42:01] POST /hook/github → 200 (12ms)" },
-      { t: "ok",  c: "[12:42:14] POST /hook/stripe → 200 (8ms)" },
-      { t: "warn", c: "[12:42:33] retry #2 → discord (timeout)" },
-      { t: "ok",  c: "[12:42:38] POST /hook/discord → 200" },
-    ],
-  },
+// Fixed 6-pane roster. Pane ids match the daemon's PANE_ID_RE (^[a-z0-9_-]{1,32}$).
+// `title` is for display only. `project_color` drives the per-pane accent (chip
+// dot, focused border, context header tint). `project_id` reserved for future
+// linkage with the Projects sidebar — null today; the daemon doesn't bind
+// panes to projects in Plan 02.
+const PTY_PANES = [
+  { id: "local-1", title: "local · zsh",     project_color: "#5cc8ff", project_id: null },
+  { id: "local-2", title: "local · build",   project_color: "#b794ff", project_id: null },
+  { id: "local-3", title: "local · scratch", project_color: "#f5b343", project_id: null },
+  { id: "vps-srv", title: "vps · srv982719", project_color: "#4ade80", project_id: null },
+  { id: "vps-log", title: "vps · logs",      project_color: "#5ee0c8", project_id: null },
+  { id: "vps-k3s", title: "vps · k3s",       project_color: "#f56fb1", project_id: null },
 ];
 
 function ContextHeader({ ctx, focused }) {
@@ -130,117 +85,167 @@ function ContextHeader({ ctx, focused }) {
   );
 }
 
-function Terminal({ idx, focused, onFocus, preset }) {
-  const [lines, setLines] = useStateT(preset.lines);
-  const [input, setInput] = useStateT("");
-  const bodyRef = useRefT(null);
-  const inputRef = useRefT(null);
-  const ctx = TERM_CONTEXT[preset.title];
+function Terminal({ idx, focused, onFocus, pane }) {
+  const containerRef = useRefT(null);
+  const termRef = useRefT(null);
+  const fitRef = useRefT(null);
+  const wsRef = useRefT(null);
+  const [ctxRaw, setCtxRaw] = useStateT(null);
 
+  // Boot xterm + WS once per mount (per pane.id). pane.id is stable for the
+  // life of the page so an empty dep array is intentional — we want exactly
+  // one Terminal/WebSocket per slot.
   useEffectT(() => {
-    if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [lines]);
+    if (!containerRef.current) return;
+    if (!window.Terminal || !window.FitAddon) {
+      // unpkg hadn't loaded — surface visibly instead of a silent black pane.
+      containerRef.current.textContent = "[xterm.js failed to load from unpkg]";
+      return;
+    }
 
-  const run = (cmd) => {
-    const cmdLine = { t: "prompt", c: cmd, path: preset.cwd };
-    let out;
-    const lower = cmd.trim().toLowerCase();
-    if (!cmd.trim()) out = [];
-    else if (lower === "clear" || lower === "cls") { setLines([]); return; }
-    else if (lower.startsWith("ls"))   out = [{ t: "dim", c: "README.md  src/  package.json  .env.local  node_modules/" }];
-    else if (lower.startsWith("git status")) out = [
-      { t: "dim", c: "On branch " + (preset.title.includes("lumen") ? "feat/auth-v2" : "main") },
-      { t: "ok",  c: "nothing to commit, working tree clean" },
-    ];
-    else if (lower.startsWith("pwd"))  out = [{ t: "dim", c: preset.cwd }];
-    else if (lower.startsWith("date")) out = [{ t: "dim", c: new Date().toString() }];
-    else if (lower.startsWith("echo ")) out = [{ t: "dim", c: cmd.slice(5) }];
-    else if (lower.startsWith("help")) out = [{ t: "dim", c: "ls · pwd · date · git status · echo … · clear" }];
-    else out = [{ t: "err", c: "command not found: " + cmd.split(" ")[0] }];
+    const term = new window.Terminal({
+      fontSize: 12,
+      fontFamily: "Geist Mono, ui-monospace, monospace",
+      theme: { background: "rgba(0,0,0,0)", foreground: "#e5e7eb" },
+      cursorBlink: true,
+      allowTransparency: true,
+      scrollback: 5000,
+    });
+    const fit = new window.FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(containerRef.current);
+    try { fit.fit(); } catch (_e) { /* container not laid out yet — first frame will fit */ }
+    termRef.current = term;
+    fitRef.current = fit;
 
-    setLines(l => [...l, cmdLine, ...out]);
-    setInput("");
-  };
+    const ws = new WebSocket(`ws://127.0.0.1:8091/pty/${pane.id}`);
+    ws.binaryType = "arraybuffer";
+    wsRef.current = ws;
 
-  const onKey = (e) => { if (e.key === "Enter") { e.preventDefault(); run(input); } };
+    const writeDisconnected = () => {
+      try {
+        term.write("\r\n\x1b[31m[disconnected — invisible-pty not running on :8091]\x1b[0m\r\n");
+      } catch (_e) { /* term may already be disposed */ }
+    };
+
+    ws.onopen = () => {
+      // Send an initial resize hint as a soft signal; daemon ignores it but
+      // browsers vary on first-frame timing — re-fit on next tick is safest.
+      setTimeout(() => { try { fit.fit(); } catch (_e) {} }, 0);
+    };
+
+    ws.onmessage = (ev) => {
+      // Plan 01/02 send text frames. If a binary frame ever arrives, decode it.
+      if (typeof ev.data === "string") {
+        term.write(ev.data);
+      } else if (ev.data instanceof ArrayBuffer) {
+        term.write(new TextDecoder().decode(ev.data));
+      }
+    };
+
+    ws.onclose = () => writeDisconnected();
+    ws.onerror = () => writeDisconnected();
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+
+    const onResize = () => { try { fit.fit(); } catch (_e) {} };
+    window.addEventListener("resize", onResize);
+
+    // Re-fit when this pane changes focus (large ↔ small swap).
+    const refitAfterLayout = setTimeout(() => { try { fit.fit(); } catch (_e) {} }, 60);
+
+    // Fetch pane context once on mount. Failure → null (collapsed header).
+    fetch(`http://127.0.0.1:8091/context/${pane.id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(setCtxRaw)
+      .catch(() => setCtxRaw(null));
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      clearTimeout(refitAfterLayout);
+      try { ws.close(); } catch (_e) {}
+      try { term.dispose(); } catch (_e) {}
+      termRef.current = null;
+      fitRef.current = null;
+      wsRef.current = null;
+    };
+  }, [pane.id]);
+
+  // Re-fit when focus toggles between large and small (geometry changed).
+  useEffectT(() => {
+    const t = setTimeout(() => { try { fitRef.current && fitRef.current.fit(); } catch (_e) {} }, 80);
+    return () => clearTimeout(t);
+  }, [focused]);
+
+  // Merge daemon's live context with the local visual identity. The daemon
+  // owns goal/activity/next; PTY_PANES owns project/color.
+  // - ctxRaw null  → fetch failed (daemon down or network error). Show collapsed.
+  // - ctxRaw {}    → no checkpoint exists for this pane id. Show collapsed.
+  // - ctxRaw {…}   → merge daemon fields + visual identity.
+  const ctx = (ctxRaw && Object.keys(ctxRaw).length > 0)
+    ? { ...ctxRaw, project: pane.title, color: pane.project_color }
+    : { project: pane.title, color: pane.project_color, goal: "", activity: [], next: [] };
 
   return (
     <div
       className={"term-pane " + (focused ? "focused" : "small")}
-      onClick={() => { onFocus(); setTimeout(() => inputRef.current?.focus(), 50); }}
+      onClick={() => { onFocus(); setTimeout(() => termRef.current?.focus(), 50); }}
     >
       <div className="term-head">
         <div className="term-dots">
           <div className="term-dot r"/><div className="term-dot y"/><div className="term-dot g"/>
         </div>
-        <span className="term-title">{preset.title}</span>
+        <span className="term-title">{pane.title}</span>
         <span className="term-status">● live</span>
       </div>
 
       <ContextHeader ctx={ctx} focused={focused}/>
 
-      <div className="term-body" ref={bodyRef}>
-        {lines.map((ln, i) => (
-          <div key={i}>
-            {ln.t === "prompt" ? (
-              <><span className="path">{ln.path}</span>{" "}<span className="prompt">$</span> {ln.c}</>
-            ) : (
-              <span className={ln.t}>{ln.c}</span>
-            )}
-          </div>
-        ))}
-        <div>
-          <span className="path">{preset.cwd}</span>{" "}
-          <span className="prompt">$</span>{" "}
-          <input
-            ref={inputRef}
-            className="term-input"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={onKey}
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <span className="term-caret"/>
-        </div>
+      <div className="term-body" style={{ padding: 0, whiteSpace: "normal", wordBreak: "normal" }}>
+        <div ref={containerRef} className="term-xterm-host" style={{ width: "100%", height: "100%" }}/>
       </div>
     </div>
   );
 }
 
 function Terminals({ projects, selectedProject, setSelectedProject }) {
-  // Match selectedProject to the terminal whose context.projectId equals it.
+  // Match selectedProject to the pane whose project_id equals it. With Plan 02
+  // bindings still server-side-only, project_id is null for all panes — the
+  // lookup returns -1 and we keep the user's last focusIdx. The hook is
+  // preserved as the wiring seam for a future plan that maps panes to projects.
   const initial = (() => {
     if (!selectedProject) return 0;
-    const i = TERM_PRESETS.findIndex(p => TERM_CONTEXT[p.title]?.projectId === selectedProject);
+    const i = PTY_PANES.findIndex(p => p.project_id === selectedProject);
     return i >= 0 ? i : 0;
   })();
   const [focusIdx, setFocusIdx] = useStateT(initial);
 
   useEffectT(() => {
     if (!selectedProject) return;
-    const i = TERM_PRESETS.findIndex(p => TERM_CONTEXT[p.title]?.projectId === selectedProject);
+    const i = PTY_PANES.findIndex(p => p.project_id === selectedProject);
     if (i >= 0) setFocusIdx(i);
   }, [selectedProject]);
 
   // Order so focused goes first (takes large slot)
-  const order = [focusIdx, ...TERM_PRESETS.map((_, i) => i).filter(i => i !== focusIdx)];
-  const focusedCtx = TERM_CONTEXT[TERM_PRESETS[focusIdx].title];
+  const order = [focusIdx, ...PTY_PANES.map((_, i) => i).filter(i => i !== focusIdx)];
+  const focusedPane = PTY_PANES[focusIdx];
 
   return (
     <>
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: "var(--pad-3)", flexWrap: "wrap" }}>
         <span className="chip accent"><span className="chip-dot"/>6 sessions · zsh</span>
-        {focusedCtx && (
-          <span className="chip" style={{ borderColor: `color-mix(in oklab, ${focusedCtx.color} 35%, transparent)` }}>
-            <span className="chip-dot" style={{ color: focusedCtx.color }}/>
-            {focusedCtx.project}
+        {focusedPane && (
+          <span className="chip" style={{ borderColor: `color-mix(in oklab, ${focusedPane.project_color} 35%, transparent)` }}>
+            <span className="chip-dot" style={{ color: focusedPane.project_color }}/>
+            {focusedPane.title}
           </span>
         )}
         <span className="muted mono" style={{ fontSize: 11, marginLeft: 4 }}>Click small panes to swap focus · headers expand for project context</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          {TERM_PRESETS.map((t, i) => {
-            const c = TERM_CONTEXT[t.title]?.color;
+          {PTY_PANES.map((p, i) => {
+            const c = p.project_color;
             return (
               <button
                 key={i}
@@ -255,10 +260,9 @@ function Terminals({ projects, selectedProject, setSelectedProject }) {
                 }}
                 onClick={() => {
                   setFocusIdx(i);
-                  const pid = TERM_CONTEXT[t.title]?.projectId;
-                  if (pid) setSelectedProject(pid);
+                  if (p.project_id) setSelectedProject(p.project_id);
                 }}
-                title={TERM_CONTEXT[t.title]?.project || t.title}
+                title={p.title}
               >
                 {i + 1}
               </button>
@@ -270,14 +274,13 @@ function Terminals({ projects, selectedProject, setSelectedProject }) {
       <div className="term-layout" style={{ height: "calc(100% - 56px)" }}>
         {order.map((i, slot) => (
           <Terminal
-            key={i}
+            key={PTY_PANES[i].id}
             idx={i}
-            preset={TERM_PRESETS[i]}
+            pane={PTY_PANES[i]}
             focused={slot === 0}
             onFocus={() => {
               setFocusIdx(i);
-              const pid = TERM_CONTEXT[TERM_PRESETS[i].title]?.projectId;
-              if (pid) setSelectedProject(pid);
+              if (PTY_PANES[i].project_id) setSelectedProject(PTY_PANES[i].project_id);
             }}
           />
         ))}
