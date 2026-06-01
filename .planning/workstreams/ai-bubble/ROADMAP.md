@@ -25,8 +25,8 @@
   5. `claude auth status` failure is surfaced to the user with a remediation hint.
 
 **Plans**: 2 plans
-- [ ] 02-01: Backend — `lib/api/chat.py` shells out to `claude -p --output-format json`; streams partial output via SSE if practical (otherwise simple POST→JSON works)
-- [ ] 02-02: Frontend — `frontend/ai-chat.jsx` posts to `/api/v1/chat`, manages local message list, surfaces errors
+- [ ] `01-01-PLAN.md` — Backend: `lib/api/chat.py` shells out to `claude -p --output-format json`; adds `do_POST` + `/api/v1/chat` route to `bin/invisible-dashboard`; creates `lib/api/__init__.py` package marker. Simple POST→JSON (no SSE).
+- [ ] `01-02-PLAN.md` — Frontend: `frontend/ai-chat.jsx` replaces `window.claude.complete` mock with a real fetch to `/api/v1/chat`; maps 401/413/429/504/5xx + network-down to distinct UI states; preserves in-memory `msgs` page-session history.
 
 ## Files this workstream OWNS
 
@@ -35,13 +35,16 @@
 
 ## Files this workstream EDITS LIGHTLY
 
-- `lib/api/__init__.py` (add `from . import chat`)
-- `bin/invisible-dashboard` (route binding)
+- `lib/api/__init__.py` (new — package marker; one import line)
+- `bin/invisible-dashboard` (adds `do_POST` method + one route binding for `/api/v1/chat`)
 
 ## Files this workstream MUST NOT TOUCH
 
 - `frontend/pages/*.jsx` — owned by sibling workstreams.
 - `frontend-vite/`, `src-tauri/` — owned by WS-6.
+- `lib/api/projects.py`, `lib/api/tree_*.py`, `lib/api/analytics.py` — sibling workstreams.
+- `bin/invisible-pty`, `lib/pty_server.py` — terminals-pty domain.
+- Any other `bin/invisible-*` script beyond the dashboard's route-binding addition.
 
 ## Verify locally
 
@@ -50,6 +53,8 @@ curl -s -X POST http://127.0.0.1:8765/api/v1/chat \
   -H 'content-type: application/json' \
   -d '{"message":"hello","page_context":"dashboard"}' | python3 -m json.tool
 ```
+
+Plus: open the bubble in-app at http://127.0.0.1:8090/, ask a real question, see a real reply.
 
 ## Resume in a fresh Claude session
 
