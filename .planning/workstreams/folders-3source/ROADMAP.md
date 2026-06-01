@@ -5,7 +5,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Three tree endpoints + live Folders page**
+- [x] **Phase 1: Three tree endpoints + live Folders page** (completed 2026-05-27)
 
 ## Phase Details
 
@@ -24,10 +24,22 @@
   5. `GET /api/v1/tree/local?watch=1` (SSE) emits diff events when files appear/disappear locally; the UI updates within 5s without a page reload.
   6. Per-project filtering works: clicking a project in the dashboard's "Dive in" → Folders should focus only that project's subtree.
 
-**Plans**: 3 plans
-- [ ] 03-01: Local walker + watcher — `lib/api/tree_local.py` (uses `watchdog` lib, falls back to polling if unavailable)
-- [ ] 03-02: VPS + GitHub walkers — `lib/api/tree_vps.py`, `lib/api/tree_repo.py`. Cache GitHub responses for 60s.
-- [ ] 03-03: Frontend wiring — `frontend/pages/folders.jsx` fetches all three; subscribes to local SSE
+**Plans**: 3 plans (planned 2026-05-26)
+
+Wave 1 (parallel, no file overlap):
+- [x] INV-01-01-local-walker-and-watcher-PLAN.md — `lib/api/tree_local.py` (walker + SSE watcher, polling fallback if watchdog absent) — done 2026-05-27, commits c7cb09e, 1ba48fa
+- [x] INV-01-02-vps-and-github-walkers-PLAN.md — `lib/api/tree_vps.py` (503 graceful-degradation), `lib/api/tree_repo.py` (60s gh-api cache) — done 2026-05-27, commits baf1628, 3224bed
+
+Wave 2:
+- [x] INV-01-03-frontend-wiring-and-routes-PLAN.md — `lib/api/__init__.py` (package marker), `bin/invisible-dashboard` (3 route branches + SSE + CORS + OPTIONS preflight), `frontend/pages/folders.jsx` (fetch + EventSource + bounded error counter) — done 2026-05-27, commits 1fe8240, 2e812d8. Task 4 verified 2026-05-27 via Puppeteer headless render: 3 columns render with real data (jobslayer local + @Avi977/jobslayer GitHub + "vps.host not configured" placeholder); error-ceiling placeholder appeared 6036ms after SIGKILL.
+
+## Progress
+
+| Plan | Status | PLAN tasks | SUMMARY tasks | Commits |
+|------|--------|-----------|---------------|---------|
+| INV-01-01 | Done | 2 | 2 | c7cb09e, 1ba48fa |
+| INV-01-02 | Done | 2 | 2 | baf1628, 3224bed |
+| INV-01-03 | Done | 4 | 4 | 1fe8240, 2e812d8 |
 
 ## Files this workstream OWNS
 

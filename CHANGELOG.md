@@ -15,6 +15,9 @@ overwritten on the next push.
 
 ### Features
 
+- **INV-01-01:** port 8 page modules to ESM with PascalCase filenames (25248ff)
+- **INV-01-01:** port 5 shared modules to ESM (Icons, Data, AiChat, TweaksPanel, App) (f57b943)
+- **INV-01-01:** bootstrap frontend-vite scaffold (Vite 5 + React 18.3.1) (d9dc93f)
 - **planning:** GSD bootstrap + 6 parallel workstreams for M1 frontend wiring (db7b68a)
 - **frontend:** drop Claude Design React UI as invisible-frontend (dc4106b)
 - **doctor:** verify codex+claude auth state, not just binary presence (98bd40e)
@@ -23,6 +26,15 @@ overwritten on the next push.
 
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
 - skip self-update commits in changelog generator (1c9d5a8)
+
+### Documentation
+
+- complete INV-01-01 summary (e33b516)
+- **INV-01-01:** summary at Task 4 checkpoint (Tasks 1-3 complete) (a14832e)
+
+### Build
+
+- **frontend-vite:** production dist/ verified Tauri-ready (f0d692b)
 
 ### Chores
 
