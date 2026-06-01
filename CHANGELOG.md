@@ -50,6 +50,7 @@ overwritten on the next push.
 
 ### Documentation
 
+- **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
 - **phase-01:** add security threat verification (16/16 closed) (f8daac6)
 - **01:** ship phase 1 — PR #6 (ef19362)
