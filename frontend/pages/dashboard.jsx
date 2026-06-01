@@ -1,6 +1,6 @@
 // Dashboard — projects overview. Supports grid / bento / kanban / list layouts.
 
-const { useState } = React;
+const { useState, useEffect, useCallback } = React;
 
 function ProjectCard({ p, layout, navTo }) {
   const [todos, setTodos] = useState(p.todos);
@@ -139,6 +139,126 @@ function Stat({ label, value, accent }) {
 }
 
 function Dashboard({ projects, layout, dataSet, navTo }) {
+  // Self-fetching real-data state.
+  // - realProjects: null while loading, array on success
+  // - error: null on success, Error instance on failure (message already sanitized by fetchProjects)
+  // - useMockFallback: user-opt-in escape hatch when the fetch fails; falls back to the props.projects (mock) pipeline
+  const [realProjects, setRealProjects] = useState(null);
+  const [error, setError] = useState(null);
+  const [useMockFallback, setUseMockFallback] = useState(false);
+
+  // Stable callback so useEffect runs exactly once on mount.
+  // useCallback with empty deps keeps the reference identity stable across renders,
+  // so the useEffect dependency array won't re-fire on layout/dataSet/projects changes.
+  const loadProjects = useCallback(() => {
+    setError(null);
+    setRealProjects(null);
+    window.fetchProjects()
+      .then(data => setRealProjects(data))
+      .catch(e => setError(e));
+  }, []);
+
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  // Datasource label shown in the page header. The user can tell at a glance
+  // which source is rendered without inspecting the network tab.
+  let displayDataSet;
+  if (useMockFallback)         displayDataSet = dataSet;       // user opted into mock
+  else if (error)              displayDataSet = "Error";
+  else if (realProjects === null) displayDataSet = "Loading";
+  else                          displayDataSet = "Real data";
+
+  // Which list to render. Loading/error states are handled below as separate branches.
+  const projectsToRender = useMockFallback ? projects : realProjects;
+
+  // ── Loading branch ───────────────────────────────────────────────
+  // Header is still rendered (with displayDataSet="Loading"). The page body
+  // shows a glass card so the user sees structure, not a blank page.
+  if (!useMockFallback && !error && realProjects === null) {
+    return (
+      <>
+        <DashHeader projects={[]} dataSet={displayDataSet}/>
+        <div className="dash-grid layout-bento" style={{ display: "block" }}>
+          <div className="glass fade-in" style={{
+            padding: "var(--pad-5)",
+            margin: "var(--pad-5) auto",
+            maxWidth: 420,
+            textAlign: "center",
+            opacity: 0.85,
+            transition: "opacity .4s ease",
+          }}>
+            <div className="mono" style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}>
+              Fetching
+            </div>
+            <div style={{ fontSize: 16, color: "var(--text-2)" }}>
+              Loading projects…
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ── Error branch ─────────────────────────────────────────────────
+  // Surfaces fetchProjects's sanitized .message (no URL / no host path).
+  // Two recovery affordances: Retry (re-invoke loadProjects) and
+  // "Show mock data instead" (flip useMockFallback so the user can keep working).
+  if (!useMockFallback && error) {
+    return (
+      <>
+        <DashHeader projects={[]} dataSet={displayDataSet}/>
+        <div className="dash-grid layout-bento" style={{ display: "block" }}>
+          <div className="glass fade-in" style={{
+            padding: "var(--pad-5)",
+            margin: "var(--pad-5) auto",
+            maxWidth: 480,
+            textAlign: "center",
+          }}>
+            <h2 style={{
+              margin: "0 0 8px",
+              fontSize: 18,
+              fontWeight: 600,
+              color: "var(--text-1)",
+            }}>
+              Couldn't load projects
+            </h2>
+            <div className="mono" style={{
+              fontSize: 12,
+              color: "var(--text-3)",
+              marginBottom: 18,
+              wordBreak: "break-word",
+            }}>
+              {error.message}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button
+                className="btn accent"
+                onClick={() => loadProjects()}
+                style={{ justifyContent: "center" }}
+              >
+                Retry
+              </button>
+              <button
+                className="btn"
+                onClick={() => setUseMockFallback(true)}
+                style={{ justifyContent: "center" }}
+              >
+                Show mock data instead
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ── Success branch (or mock-fallback opted-in) ──────────────────
   if (layout === "kanban") {
     const cols = [
       { id: "planning",    title: "Planning" },
@@ -148,12 +268,12 @@ function Dashboard({ projects, layout, dataSet, navTo }) {
     ];
     return (
       <>
-        <DashHeader projects={projects} dataSet={dataSet}/>
+        <DashHeader projects={projectsToRender} dataSet={displayDataSet}/>
         <div className="dash-grid layout-kanban">
           {cols.map(c => (
             <div key={c.id} className="kanban-col">
-              <div className="kanban-col-title">{c.title} · {projects.filter(p => p.status === c.id).length}</div>
-              {projects.filter(p => p.status === c.id).map(p => (
+              <div className="kanban-col-title">{c.title} · {projectsToRender.filter(p => p.status === c.id).length}</div>
+              {projectsToRender.filter(p => p.status === c.id).map(p => (
                 <ProjectCard key={p.id} p={p} layout="kanban" navTo={navTo}/>
               ))}
             </div>
@@ -165,9 +285,9 @@ function Dashboard({ projects, layout, dataSet, navTo }) {
 
   return (
     <>
-      <DashHeader projects={projects} dataSet={dataSet}/>
+      <DashHeader projects={projectsToRender} dataSet={displayDataSet}/>
       <div className={"dash-grid layout-" + layout}>
-        {projects.map(p => <ProjectCard key={p.id} p={p} layout={layout} navTo={navTo}/>)}
+        {projectsToRender.map(p => <ProjectCard key={p.id} p={p} layout={layout} navTo={navTo}/>)}
       </div>
     </>
   );

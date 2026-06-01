@@ -6,7 +6,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Real `/api/v1/projects` end-to-end** — adapter + frontend wiring
+- [x] **Phase 1: Real `/api/v1/projects` end-to-end** — adapter + frontend wiring — 2026-05-27
 
 ## Phase Details
 
@@ -25,8 +25,8 @@
   5. The "Mock data" toggle in the Tweaks panel still works for the OTHER pages (it falls back to mock for any data not yet wired).
 
 **Plans**: 2 plans
-- [ ] 01-01: Backend — `lib/api/projects.py` builds project objects from real sources; `bin/invisible-dashboard` mounts `/api/v1/projects` via `lib/api/__init__.py` registry
-- [ ] 01-02: Frontend — `frontend/pages/dashboard.jsx` fetches `/api/v1/projects` on mount, adds loading + error states, keeps Tweaks fallback for other pages
+- [x] 01-01: Backend — `lib/api/projects.py` builds project objects from real sources; `bin/invisible-dashboard` mounts `/api/v1/projects` via `lib/api/__init__.py` registry — 2026-05-27
+- [x] 01-02: Frontend — `frontend/pages/dashboard.jsx` fetches `/api/v1/projects` on mount, adds loading + error states, keeps Tweaks fallback for other pages — 2026-05-27
 
 ## Files this workstream OWNS
 

@@ -1,4 +1,5 @@
 ---
+workstream: dashboard-wiring
 workstream: terminals-pty
 created: 2026-05-26
 ---
@@ -14,6 +15,10 @@ created: 2026-05-26
 ## Progress
 **Phases Complete:** 0
 **Current Plan:** N/A
+
+## Session Continuity
+**Stopped At:** N/A
+**Resume File:** None
 
 ## Session Continuity
 **Stopped At:** N/A
