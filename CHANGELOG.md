@@ -56,6 +56,8 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-01:** update project CONTEXT.md — M2 tools-page shipped (PR #10) (b6f8ee3)
+- **INV-01:** ship phase 1 — PR #10 (6ee823e)
 - **phase-1:** complete phase execution — Tools page wired + verified (a84f80c)
 - **INV-01:** mark 01-02 complete — phase plans done (4892dbf)
 - **INV-01-02:** summary — Tools page wired + real-browser E2E verified (9e6efd1)
