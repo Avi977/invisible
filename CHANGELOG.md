@@ -15,12 +15,31 @@ overwritten on the next push.
 
 ### Features
 
-- **INV-02:** tauri shell with tray + 5 commands + SSE bridge (b6551d0)
-- **INV-02:** SSE bridge with polling fallback + frontend-vite/src/lib/tauri.js (83d9683)
-- **INV-02:** system tray and close-to-hide window event (688ad19)
-- **INV-02:** five Tauri commands wrapping CLI surface (016821e)
-- **INV-02:** scaffold src-tauri/ Tauri 2.x project (1b4742a)
+- **INV-02:** tauri shell with tray + 5 commands + SSE bridge (e84209f)
+- **INV-02:** SSE bridge with polling fallback + frontend-vite/src/lib/tauri.js (cd208c2)
+- **INV-02:** system tray and close-to-hide window event (20671e8)
+- **INV-02:** five Tauri commands wrapping CLI surface (db04421)
+- **INV-02:** scaffold src-tauri/ Tauri 2.x project (4fb337b)
+- **01-01:** INVISIBLE_PTY_EXTRA_ORIGINS env var for sibling-workstream testing (ed21f33)
+- **01-02:** make Dashboard self-fetching with loading + error + fallback (89a3135)
+- **01-02:** add fetchProjects() helper to data.jsx for real /api/v1/projects (d0dd0f5)
+- **01-01:** wire /api/v1/* dispatch + loopback CORS into dashboard (b8d4197)
+- **01-01:** implement /api/v1/projects adapter (a7376af)
+- **INV-01-03:** wire folders.jsx to live three-source endpoints + SSE (2e812d8)
+- **01-03:** wire Terminals page to live PTY daemon over WebSocket (126a8ea)
+- **INV-01-03:** wire three-source tree routes + CORS into dashboard (1fe8240)
+- **INV-01-02:** add SSH walker for /api/v1/tree/vps with 503 graceful degradation (3224bed)
+- **01-02:** SSH variant + load pane configs from invisible.toml (a20c0db)
+- **INV-01-02:** add gh-api walker for /api/v1/tree/repo with 60s cache (baf1628)
+- **01-02:** add session persistence to PTYRegistry + handle_pty (1444d5a)
+- **INV-01:** add stream_diffs SSE watcher with watchdog + polling fallback (1ba48fa)
+- **INV-01:** add local-tree walker with path-traversal guard (c7cb09e)
+- **01-01:** add bin/invisible-pty daemon entrypoint (7fa29f3)
+- **01-01:** add WebSocket PTY server module with security gates (6a77347)
+- **01-02:** wire ai-chat bubble to POST /api/v1/chat (9f47c44)
 - **INV-01-01:** port 8 page modules to ESM with PascalCase filenames (25248ff)
+- **01-01:** add POST /api/v1/chat route to dashboard daemon (bc58eed)
+- **01-01:** implement chat_handler for /api/v1/chat proxy (4fbc0e8)
 - **INV-01-01:** port 5 shared modules to ESM (Icons, Data, AiChat, TweaksPanel, App) (f57b943)
 - **INV-01-01:** bootstrap frontend-vite scaffold (Vite 5 + React 18.3.1) (d9dc93f)
 - **planning:** GSD bootstrap + 6 parallel workstreams for M1 frontend wiring (db7b68a)
@@ -29,16 +48,58 @@ overwritten on the next push.
 
 ### Bug Fixes
 
-- **tauri:** also update tauri.conf.json (companion to 0d56203 plan-doc fix) (eb39d5f)
-- **tauri:** beforeDevCommand cwd is project root, not src-tauri/ (0d56203)
+- **tauri:** also update tauri.conf.json (companion to 0d56203 plan-doc fix) (27d4de0)
+- **tauri:** beforeDevCommand cwd is project root, not src-tauri/ (9b41a50)
+- **01-03:** TerminalPane name + 6-pane grid layout (12dc319)
+- **dashboard:** add CORS preflight + headers for bubble on :8090 (7ef22aa)
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
 - skip self-update commits in changelog generator (1c9d5a8)
 
 ### Documentation
 
-- **INV-02:** record Task 6 self-check in SUMMARY (0c25136)
+- **INV-02:** record Task 6 self-check in SUMMARY (e8294bb)
+- **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
+- **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
+- **phase-01:** add security threat verification (16/16 closed) (f8daac6)
+- **01:** ship phase 1 — PR #6 (ef19362)
+- **phase-01:** upgrade verification to pass after CDP interactive runs (d354ba0)
+- **01:** ship phase 1 — PR #5 (77e18cc)
+- **01:** VERIFICATION.md status passed (1 override, SSH UAT deferred) (fd9ac89)
+- **phase-01:** verification report (add8526)
+- **INV-01:** polish STATE.md after ship — clean stale checkpoint text (93b08d0)
+- **INV-01:** ship phase — PR #2 (0f5ce1c)
+- **01-02:** complete frontend wiring plan (a79ba04)
+- **01:** VERIFICATION.md — 6/6 SCs verified, 1 human-needed item (1501c49)
+- **INV-01:** verification PASSED — 6/6 success criteria + REQ-03 verified (bae3c79)
+- **01-03:** mark Plan 03 + Phase 1 complete after in-session UAT (6485626)
+- **INV-01-03:** close out Task 4 — verified via Puppeteer headless render (e1973bd)
+- **01:** ship phase 01 — PR #1 (5bbaa22)
+- **01:** VERIFICATION.md — phase 01 verified pass (dcd7b22)
+- **01:** playwright-verify UAT checks 5+6; log workstream daemon contention (0b5dff2)
+- **01-01:** complete backend adapter plan (5dba5aa)
+- **INV-01-03:** complete Tasks 1-3, Task 4 pending human verify (c72955f)
+- **01-03:** add Plan 03 draft summary at checkpoint (9892ca3)
+- **01-03:** add invisible-pty to README Surfaces list (b3de3ad)
+- **01-02:** complete session-persistence + ssh variant plan (ea9ef30)
+- **INV-01-02:** complete vps-and-github-walkers plan (f3e9b6d)
+- **01:** create phase plan (b9ff6ff)
+- **INV-01-01:** complete local-walker-and-watcher plan (4659312)
+- **01-01:** SUMMARY.md for Plan 01 — PTY daemon scaffold (f571514)
 - complete INV-01-01 summary (e33b516)
+- **01:** defer human-verify + CORS to FOLLOWUPS.md (d831207)
+- **01-02:** summary + STATE for plan 02 (checkpoint pending) (fc9fb9a)
+- **INV-01:** plan three tree endpoints + live folders page (3 plans, 2 waves) (8418bcf)
 - **INV-01-01:** summary at Task 4 checkpoint (Tasks 1-3 complete) (a14832e)
+- **01-01:** complete api-v1-chat-end-to-end plan 01 (3b706cb)
+- **01:** create phase plan (8fbb70e)
+- **01:** create phase plan (a334789)
+
+### Tests
+
+- **01-01:** add failing tests for /api/v1/projects adapter (7f0565e)
+- **01-02:** verify reconnect persistence + add PLAN-02 verification log (8262065)
+- **01-01:** verify four threat-model gates end-to-end + log marker (1b241a5)
+- **01-01:** add failing tests for chat_handler (ac39358)
 
 ### Build
 
@@ -46,6 +107,7 @@ overwritten on the next push.
 
 ### Chores
 
+- **gitignore:** untrack START_HERE.md (per-worktree scaffold) (d5c369b)
 - **planning:** untrack .planning/active-workstream (989c449)
 
 <!-- END AUTOGENERATED -->
