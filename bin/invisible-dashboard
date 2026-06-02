@@ -49,7 +49,6 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -222,37 +221,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002, ARG002
         return
 
-    # CORS: the AI bubble (served by invisible-frontend on :8090) fetches
-    # /api/v1/chat from this daemon on :8765 — different origin, so the
-    # browser preflights and gates on these headers. `*` is safe because we
-    # never send Access-Control-Allow-Credentials and --no-auth is pinned
-    # to 127.0.0.1; the dashboard cannot be reached cross-origin from outside
-    # localhost without bearer-token auth.
+    # CORS is single-sourced (loopback-only). The AI bubble + Tools page
+    # (served by invisible-frontend on :8090) fetch this daemon on :8765 —
+    # a different origin, so the browser preflights and gates on these
+    # headers. We must emit EXACTLY ONE Access-Control-Allow-Origin per
+    # response, and only echo loopback origins (http://127.0.0.1:* /
+    # http://localhost:*) — never a bare `*`. Emitting `*` here AND echoing
+    # the Origin in _send_json produced a duplicate ACAO that browsers
+    # reject, so end_headers() no longer adds any CORS headers; the single
+    # source is _cors_headers(), called from _send_json/_send_text/_send_html
+    # and do_OPTIONS. Credentials are never allowed; with --no-auth pinned to
+    # 127.0.0.1 plus the loopback origin gate, the API stays closed to other
+    # web origins.
     def end_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         super().end_headers()
 
-    def do_OPTIONS(self) -> None:  # noqa: N802
-        """CORS preflight handler — intentionally NOT auth-gated.
+    def _cors_headers(self) -> None:
+        """Emit the loopback-only CORS triplet — the single ACAO source.
 
-        Browsers cannot attach the Authorization header on the preflight
-        itself, so 401-ing it would block every cross-origin call from the
-        frontend (:8090) before the real GET/POST ever fires. The follow-up
-        request still goes through _auth_ok() in do_GET / do_POST.
-
-        For /api/v1/tree/* we also emit Access-Control-Max-Age: 600 so the
-        browser caches the preflight for 10 minutes; the tree endpoints are
-        polled / re-subscribed frequently and uncached preflights are pure
-        latency. The end_headers() override (above) supplies ACAO/ACAH/ACAM.
+        Echoes the request Origin back ONLY when it is http://127.0.0.1:* or
+        http://localhost:*. Called by every response helper (and do_OPTIONS)
+        BEFORE end_headers(), so each response carries at most one
+        Access-Control-Allow-Origin. Non-loopback origins get no ACAO and the
+        browser then blocks the cross-origin read.
         """
-        path = urllib.parse.urlparse(self.path).path
-        self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Content-Length", "0")
-        if path.startswith("/api/v1/tree/"):
-            self.send_header("Access-Control-Max-Age", "600")
-        self.end_headers()
+        origin = self.headers.get("Origin", "")
+        if (origin.startswith("http://127.0.0.1:")
+                or origin.startswith("http://localhost:")):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
 
     # ---- auth ----
     def _token_from_request(self) -> str | None:
@@ -280,6 +277,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
         self.send_header("Cache-Control", "no-store")
+        self._cors_headers()  # single-source loopback-only ACAO
         self.end_headers()
         self.wfile.write(b)
 
@@ -289,17 +287,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
         self.send_header("Cache-Control", "no-store")
-        # Loopback-only CORS: echo the Origin header back ONLY if it is
-        # 127.0.0.1 or localhost. Never `*` — even with --no-auth the API
-        # must stay closed to web pages on other origins.
-        origin = self.headers.get("Origin", "")
-        if (origin.startswith("http://127.0.0.1:")
-                or origin.startswith("http://localhost:")):
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
-        # CORS headers (ACAO/ACAM/ACAH) are emitted globally by the
-        # end_headers() override above — adding them here would produce
-        # duplicate headers which the CORS spec rejects.
+        self._cors_headers()  # single-source loopback-only ACAO (never `*`)
         self.end_headers()
         self.wfile.write(b)
 
@@ -308,6 +296,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
+        self._cors_headers()  # single-source loopback-only ACAO
         self.end_headers()
         self.wfile.write(b)
 
@@ -416,19 +405,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_text("not found\n", 404)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
-        """CORS preflight. Loopback-only origins receive the allow-headers
-        the frontend may send (Authorization for non-/no-auth mode, plus
-        Content-Type for future POST endpoints sister workstreams add).
-        Non-loopback origins get a 204 with NO Access-Control-Allow-Origin
-        header — the browser will then block the actual fetch.
+        """CORS preflight — intentionally NOT auth-gated.
+
+        Browsers cannot attach the Authorization header on the preflight
+        itself, so 401-ing it would block every cross-origin call from the
+        frontend (:8090) before the real request fires; the follow-up still
+        passes through _auth_ok() in do_GET / do_POST / do_PUT / do_DELETE.
+
+        Loopback-only origins receive the single-source ACAO (via
+        _cors_headers()) plus the allow-methods/headers and a 10-minute
+        Max-Age (tree endpoints are polled / re-subscribed frequently, so an
+        uncached preflight is pure latency). Methods advertise the write verbs
+        (PUT/DELETE) the Tools autosave + delete need. Non-loopback origins get
+        a 204 with NO Access-Control-Allow-Origin — the browser then blocks the
+        actual fetch.
         """
         origin = self.headers.get("Origin", "")
         self.send_response(204)
+        self._cors_headers()  # single-source loopback-only ACAO + Vary
         if (origin.startswith("http://127.0.0.1:")
                 or origin.startswith("http://localhost:")):
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods",
+                             "GET, POST, PUT, DELETE, OPTIONS")
             self.send_header("Access-Control-Allow-Headers",
                              "Authorization, Content-Type")
             self.send_header("Access-Control-Max-Age", "600")
