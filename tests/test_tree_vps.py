@@ -536,3 +536,98 @@ def test_walk_all_argv_passes_through_ssh_options_and_identity(tmp_path, monkeyp
     assert host_index < dd_index, "host must come before -- in the argv"
     # The remote command (find ...) must come after --.
     assert "find" in argv[dd_index + 1 :]
+
+
+def test_walk_all_argv_shell_quotes_remote_command_so_globs_dont_expand_on_remote(tmp_path, monkeypatch):
+    """REGRESSION (Plan 01-02 Step 2B): glob args in the remote command must be shell-quoted.
+
+    Found end-to-end against srv982719: OpenSSH joins the remote argv with
+    spaces and pipes the result to the remote ``$SHELL -c``, so unquoted
+    ``*/.git*`` would be glob-expanded by the remote shell against the
+    remote CWD (typically ``$HOME``) — breaking the ``find`` invocation:
+
+        find: paths must precede expression: `ace-claude-toolkit/.gitignore'
+
+    The fix is `shlex.quote` on every element of `*remote_cmd` inside
+    `_ssh_argv`. This regression test asserts the contract from the stub
+    side so a future maintainer can't accidentally drop the quoting.
+    """
+    _write_toml(
+        tmp_path,
+        vps={"host": "srv982719", "identity": "~/.ssh/id_ed25519"},
+        projects=[{"name": "proj", "vps_repo_path": "/srv/proj"}],
+    )
+    tree_vps = _fresh_tree_vps(tmp_path, monkeypatch)
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(argv, **kw):  # noqa: ARG001
+        captured["argv"] = argv
+        return _make_completed(stdout="d /srv/proj\n")
+
+    monkeypatch.setattr(tree_vps.subprocess, "run", fake_run)
+    tree_vps.walk_all()
+
+    argv = captured["argv"]
+    # The remote command is everything after the "--" terminator.
+    dd = argv.index("--")
+    remote = argv[dd + 1 :]
+    # The glob pattern in the find argv must arrive shell-quoted so the
+    # remote shell does NOT glob-expand it. shlex.quote('*/.git*') is
+    # "'*/.git*'" (single-quoted).
+    assert "'*/.git*'" in remote, (
+        f"glob pattern must be shell-quoted in remote argv; got {remote!r}"
+    )
+    # And the single-token args must NOT be artificially quoted (shlex.quote
+    # returns them unchanged) — keeps the argv readable for debugging.
+    assert "find" in remote, f"find binary token must appear unquoted in {remote!r}"
+    assert "/srv/proj" in remote, f"remote_root must appear unquoted in {remote!r}"
+    assert "-maxdepth" in remote, f"-maxdepth flag must appear unquoted in {remote!r}"
+
+
+def test_walk_remote_handles_real_world_remote_cwd_via_shell_quoting(tmp_path, monkeypatch):
+    """REGRESSION (Plan 01-02 Step 2B): _walk_remote tolerates remote CWDs that match the glob.
+
+    Belt-and-braces. Even if a future maintainer reverts the `shlex.quote`
+    on `_ssh_argv` and re-introduces the bug, this test would catch it by
+    simulating the remote shell's pre-find glob expansion: if globs are
+    unquoted, the simulated `subprocess.run` returns the corresponding
+    "find: paths must precede expression" stderr + rc=1, leading to a
+    `badge="unreachable"` result — and this test asserts the OPPOSITE
+    (a happy 200 tree). It would fail loudly if the quoting regressed.
+    """
+    _write_toml(
+        tmp_path,
+        vps={"host": "srv982719", "identity": "~/.ssh/id_ed25519"},
+        projects=[{"name": "proj", "vps_repo_path": "/srv/proj"}],
+    )
+    tree_vps = _fresh_tree_vps(tmp_path, monkeypatch)
+
+    def fake_run(argv, **kw):  # noqa: ARG001
+        # Find the remote command after "--".
+        dd = argv.index("--")
+        remote = argv[dd + 1 :]
+        # Simulate a remote shell that would glob-expand unquoted "*/.git*"
+        # to a list of CWD-relative files — this is exactly the failure
+        # mode observed against srv982719 in Plan 01-02.
+        for arg in remote:
+            if arg == "*/.git*":
+                # Bug branch: unquoted glob. Simulate find's error.
+                return _make_completed(
+                    returncode=1,
+                    stderr=(
+                        "find: paths must precede expression: "
+                        "`ace-claude-toolkit/.gitignore'\n"
+                    ),
+                )
+        # Happy branch: quoted globs survived intact, find runs OK.
+        return _make_completed(stdout="d /srv/proj\nf /srv/proj/main.py\n")
+
+    monkeypatch.setattr(tree_vps.subprocess, "run", fake_run)
+    rows, status = tree_vps.walk_all()
+    assert status == 200
+    walked = rows[0]["children"][0]
+    assert walked.get("badge") is None, (
+        f"the remote shell must NOT receive an unquoted glob — got badge={walked.get('badge')!r}"
+    )
+    assert {c["name"] for c in walked["children"]} == {"main.py"}
