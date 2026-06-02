@@ -10,33 +10,38 @@
 
 - [ ] **Phase 1: `/api/v1/tools` CRUD + Tools page wired**
 
-## Phase 1 Details
+## Phase Details
 
-**Goal:** The Tools page (n8n-style node canvas) reads + writes real
+### Phase 1: /api/v1/tools CRUD + Tools page wired
+
+**Goal**: The Tools page (n8n-style node canvas) reads + writes real
 workflow definitions per project, replacing the `TOOL_WORKFLOWS` mock
 in `frontend/data.jsx`.
 
-**Persistence model:** Tool workflows are project-scoped. Store them
+**Depends on**: Nothing — pure parallel with the other five M2 workstreams
+(tauri-windows, vps-connection, relations-page, calendar-events, ci-and-onboarding).
+
+**Persistence model**: Tool workflows are project-scoped. Store them
 on disk at `~/.invisible/workflows/<project>.json` (a tiny JSON file per
 project — matches the orchestrator's checkpoint-on-disk pattern). No
 database. Lock-free single-writer per project.
 
-**Success criteria:**
-1. `GET /api/v1/tools?project=<slug>` returns the project's workflow as
-   `{nodes: [...], edges: [...], updated_at}`.
-2. `PUT /api/v1/tools?project=<slug>` accepts a body with the same
-   shape, writes to disk atomically (tmpfile + rename), returns the
-   new `updated_at`.
-3. `DELETE /api/v1/tools?project=<slug>` removes the workflow file (or
-   returns 404 if missing).
-4. The n8n-style canvas in `frontend/pages/tools.jsx`:
-   - Loads from `/api/v1/tools?project=<currentProjectId>` on project switch.
-   - Saves on each node add / drag / wire change, debounced 1s.
-   - Renders a tiny "saving…" / "saved 3s ago" footer indicator.
-5. Cross-project: switching projects from the tab strip loads that
-   project's workflow without bleeding state.
+**Success Criteria** (what must be TRUE):
+  1. `GET /api/v1/tools?project=<slug>` returns the project's workflow as
+     `{nodes: [...], edges: [...], updated_at}`.
+  2. `PUT /api/v1/tools?project=<slug>` accepts a body with the same
+     shape, writes to disk atomically (tmpfile + rename), returns the
+     new `updated_at`.
+  3. `DELETE /api/v1/tools?project=<slug>` removes the workflow file (or
+     returns 404 if missing).
+  4. The n8n-style canvas in `frontend/pages/tools.jsx`:
+     - Loads from `/api/v1/tools?project=<currentProjectId>` on project switch.
+     - Saves on each node add / drag / wire change, debounced 1s.
+     - Renders a tiny "saving…" / "saved 3s ago" footer indicator.
+  5. Cross-project: switching projects from the tab strip loads that
+     project's workflow without bleeding state.
 
-**Plans:** 2 plans
+**Plans**: 2 plans
 - [ ] 01-01: Backend — `lib/api/tools.py` (GET/PUT/DELETE), atomic write helper, lock-free single-writer
 - [ ] 01-02: Frontend — `frontend/pages/tools.jsx` swap from `TOOL_WORKFLOWS` to fetch+save; debounced autosave; status footer
 
