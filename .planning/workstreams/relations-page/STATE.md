@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: M2
 current_phase: 1
-current_plan: 2
-status: milestone_complete
-stopped_at: Milestone complete (Phase 1 was final phase)
-last_updated: 2026-06-02T05:07:31.619Z
+current_plan: Not started
+status: "Phase 1 shipped — PR #11"
+stopped_at: End of workstream Phase 1 — both plans shipped; nothing left to execute in this workstream's M2 scope
+last_updated: "2026-06-02T07:01:48.562Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 1
@@ -22,7 +22,7 @@ progress:
 
 Phase: 1 (/api/v1/relations + Relations page wired) — **COMPLETE**
 Plan: 2 of 2 (both 01-01 backend AND 01-02 frontend SHIPPED)
-**Status:** Milestone complete
+**Status:** Phase 1 shipped — PR #11
 **Current Phase:** 1
 **Last Activity:** 2026-06-02
 **Last Activity Description:** Plan 01-02 SHIPPED — relations frontend wired (`68d9b8a` Task 1, `c73a452` Task 2), CORS fix `c18ca74` (Wave 2 deviation), Task 3 human-verify APPROVED via Chrome DevTools MCP (5/5 checks PASS), SUMMARY written
