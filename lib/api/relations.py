@@ -996,3 +996,43 @@ def handle_relations(handler: Any) -> None:
             handler._send_json({"error": "internal error"}, status=500)
         except Exception:  # noqa: BLE001
             pass
+
+
+# PLAN-01-01 verification log
+# ───────────────────────────
+# Plan 02 (frontend wire-up) greps for this marker before fetching
+# /api/v1/relations from the React page, as proof the API surface is
+# stable. Do NOT remove without bumping the contract in
+# .planning/workstreams/relations-page/ROADMAP.md and updating Plan 02.
+#
+# Verified end-to-end against bin/invisible-dashboard --no-auth on 2026-06-02.
+# Initial probe used port 8765; a sibling-worktree daemon (calendar-events)
+# was holding 8765 during the test window so the four scenarios below were
+# re-run against port 8769 with identical results. Behavior is port-
+# independent; the dashboard binds to 127.0.0.1 on whatever --port the
+# caller supplies.
+#
+#  (a) GET /api/v1/relations?project=invisible
+#      → HTTP 200 · 98 nodes · 216 edges
+#      → edge kinds: {import: 21, grep: 195}
+#      → node types: {module: 28, doc: 64, endpoint: 5, project: 1}
+#      → every edge endpoint present in nodes (no dangling refs)
+#      → cold call 0.26 s · warm (cache hit) 0.000 s · cache TTL 60 s
+#
+#  (b) GET /api/v1/relations          (no project → aggregate)
+#      → HTTP 200 · 134 nodes · 305 edges
+#      → aggregate edge count ≥ invisible-only (216) — confirms the
+#        build_graph(None) slug list = ["invisible"] + invisible.toml
+#        [[projects]] names (the SPECIAL CASE prefix is present)
+#
+#  (c) GET /api/v1/relations?project=../../etc/passwd     (raw)
+#      GET /api/v1/relations?project=..%2F..%2Fetc%2Fpasswd  (URL-encoded)
+#      → both HTTP 400 · body {"error": "invalid_project"}
+#      → raw input never echoed back into response body (T-01-01-01)
+#
+#  (d) GET /api/v1/relations?project=invisible  (NOTION_TOKEN unset)
+#      → HTTP 200 · 97 nodes · 216 edges · 0 project nodes
+#      → notion deriver silently short-circuits on missing token (per
+#        spec: "no notion configured" is a normal state, not a failure)
+#      → import + grep edges unchanged (T-01-01-06)
+
