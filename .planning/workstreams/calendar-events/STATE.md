@@ -4,10 +4,10 @@ milestone: M2
 milestone_name: deferred-pages-wired
 current_phase: 1
 current_plan: 1
-status: ready_to_execute
-stopped_at: N/A
-last_updated: "2026-06-01T21:00:00.000Z"
-last_activity: 2026-06-01
+status: executing
+stopped_at: N/A — planning just completed
+last_updated: "2026-06-02T04:06:25.362Z"
+last_activity: 2026-06-02
 progress:
   total_phases: 1
   completed_phases: 0
@@ -20,17 +20,17 @@ progress:
 
 ## Current Position
 
-Phase: 1 (`/api/v1/calendar` + Calendar page wired) — READY TO EXECUTE
+Phase: 1 (api-v1-calendar-calendar-page-wired) — EXECUTING
 Plan: 1 of 2
-**Status:** Ready to execute Phase 1
+**Status:** Executing Phase 1
 **Current Phase:** 1
-**Last Activity:** 2026-06-01
-**Last Activity Description:** Phase 1 planning complete (plan-checker PASS on iteration 2)
+**Last Activity:** 2026-06-02
+**Last Activity Description:** Phase 1 execution started
 
 ## Progress
 
 **Phases Complete:** 0
-**Current Plan:** 01 (Backend — `lib/api/calendar.py` + route wiring)
+**Current Plan:** 1
 **Next Plan:** 02 (Frontend — `frontend/pages/calendar.jsx` swap; depends_on 01)
 
 ## Plans

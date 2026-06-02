@@ -6,7 +6,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: `/api/v1/calendar` + Calendar page wired**
+- [x] **Phase 1: `/api/v1/calendar` + Calendar page wired** (completed 2026-06-02)
 
 ## Phase Details
 
@@ -41,8 +41,8 @@ shows "no events configured" gracefully.
   8. iCal parsing uses stdlib only — no new dependency in `requirements.txt`.
 
 **Plans**: 2 plans
-- [ ] 01-01: Backend — `lib/api/calendar.py` with the 3 sources, dedupe, cache
-- [ ] 01-02: Frontend — `frontend/pages/calendar.jsx` swap; preserve visual + interactions (live "now" line, click-to-expand)
+- [x] 01-01: Backend — `lib/api/calendar.py` with the 3 sources, dedupe, cache
+- [x] 01-02: Frontend — `frontend/pages/calendar.jsx` swap; preserve visual + interactions (live "now" line, click-to-expand)
 
 ## Files this workstream OWNS
 
