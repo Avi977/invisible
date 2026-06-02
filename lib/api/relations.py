@@ -235,7 +235,11 @@ def _project_root(slug: str) -> Path | None:
     """
     if slug == "invisible":
         try:
-            return config.home()
+            # .resolve() so downstream is_relative_to() comparisons against
+            # candidate.resolve() are symlink-stable. If INVISIBLE_HOME points
+            # through a symlink, unresolved root + resolved candidates would
+            # silently mismatch and drop every import edge (review WR-02).
+            return config.home().resolve()
         except Exception:  # noqa: BLE001 — never crash the handler on home() failure
             return None
     try:
