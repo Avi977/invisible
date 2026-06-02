@@ -1,0 +1,52 @@
+# Ruff configuration for `invisible`.
+#
+# Two facts about this repo drive everything here:
+#
+# 1. `bin/invisible-*` are Python scripts with NO `.py` extension (21 of 23;
+#    the 2 exceptions invisible-review / invisible-update are bash). Ruff would
+#    skip them unless explicitly included — hence `extend-include` below.
+#
+# 2. Every Python entrypoint and test does `sys.path.insert(0, .../lib)` BEFORE
+#    its imports (there is no `lib/__init__.py`; `api` is a top-level package
+#    reachable only with `lib/` on the path — see bin/invisible-doctor L32-34).
+#    Those late imports are E402. A full default ruleset would flag E402 across
+#    the entire codebase, so the lint job would be red on a fresh clone.
+#
+# Therefore: a LENIENT, curated rule set that passes the existing code today.
+# We start from pyflakes (`F`) as a safe floor — real undefined-name / unused
+# bugs — and deliberately keep pycodestyle's E402 out of the build. Tightening
+# the ruleset is explicitly deferred (phase 01 decision D-02).
+
+target-version = "py311"
+
+# Lint the extension-less Python scripts under bin/ (e.g. bin/invisible-pty).
+extend-include = ["bin/invisible-*"]
+
+# ...but `extend-include` forces Ruff to PARSE every match as Python, and the
+# glob above also matches the 2 bash scripts in bin/. On Ruff 0.15.x those two
+# files raise ~218 `invalid-syntax` errors when parsed as Python, which would
+# make the lint job red on a fresh clone. Exclude them explicitly so Ruff only
+# parses the 21 genuine Python scripts. (Their shebang is `#!/usr/bin/env bash`.)
+extend-exclude = ["bin/invisible-review", "bin/invisible-update"]
+
+[lint]
+# Pyflakes (`F`) as the rule family — catches the genuinely valuable class of
+# bugs (e.g. F821 undefined-name) without pulling in pycodestyle's whole-repo
+# E402 noise. Tightening beyond "passes the existing code" is deferred (D-02).
+select = ["F"]
+
+# `ignore` list — every entry traces to a REAL pre-existing finding in source
+# this phase MUST NOT modify (lib/ and bin/ are owned by other workstreams).
+# Verified counts from `ruff check lib/ bin/` on a clean checkout:
+#
+#   E402  late imports after sys.path.insert, repo-wide (each `# noqa: E402`'d).
+#   F401  16x unused imports (e.g. bin/invisible-app `queue`, dashboard `socket`).
+#   F541   6x f-string without placeholders (e.g. bin/invisible-cleanup:131).
+#   F811   1x redefined-while-unused (bin/invisible-dashboard `do_OPTIONS`).
+#   F841   3x unused local variable.
+#
+# These are cleanup/style nits, not correctness bugs; suppressing them keeps the
+# job green on `main` today. F821 (undefined name) and the rest of pyflakes stay
+# active, so the lint still catches real breakage in NEW code. Re-tightening
+# (removing these ignores after the source is cleaned) is explicitly deferred.
+ignore = ["E402", "F401", "F541", "F811", "F841"]
