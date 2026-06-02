@@ -132,7 +132,10 @@ def now_iso() -> str:
 
 def log_review(*, project_id: str | None, iteration: int, agent: str,
                verdict: str, summary: str, body_md: str,
-               diff_sha: str = "") -> dict | None:
+               diff_sha: str = "",
+               usage: dict | None = None,
+               started_at: str | None = None,
+               completed_at: str | None = None) -> dict | None:
     db = _db("reviews")
     if not db:
         return None
@@ -148,6 +151,21 @@ def log_review(*, project_id: str | None, iteration: int, agent: str,
     }
     if project_id:
         props["Project"] = _relation([project_id])
+    if usage:
+        if usage.get("input_tokens") is not None:
+            props["Input tokens"] = _number(int(usage["input_tokens"]))
+        if usage.get("output_tokens") is not None:
+            props["Output tokens"] = _number(int(usage["output_tokens"]))
+        if usage.get("cache_read_input_tokens") is not None:
+            props["Cache read tokens"] = _number(int(usage["cache_read_input_tokens"]))
+        if usage.get("cache_creation_input_tokens") is not None:
+            props["Cache creation tokens"] = _number(int(usage["cache_creation_input_tokens"]))
+        if usage.get("cost_usd") is not None:
+            props["Cost USD"] = _number(float(usage["cost_usd"]))
+    if started_at:
+        props["Started"] = _date(started_at)
+    if completed_at:
+        props["Completed"] = _date(completed_at)
     return _request("POST", "/pages", {
         "parent": {"database_id": db},
         "properties": props,
@@ -318,3 +336,98 @@ def query_recent_reviews(hours: int = 24, *, project_id: str | None = None,
         }
     r = _request("POST", f"/databases/{db}/query", body)
     return r.get("results", []) if r else []
+
+
+def query_calendar_db(database_id: str, date_from: str, date_to: str) -> list[dict]:
+    """Query a Notion calendar database for events in [date_from, date_to].
+
+    Used by lib/api/calendar.py to feed the Notion-source loader for the
+    /api/v1/calendar endpoint. Returns the raw Notion `results[]` list (each
+    element is a page object whose `properties` dict the caller flattens into
+    the canonical event shape). The caller — not this helper — is responsible
+    for mapping Notion property values into {id, title, start, end, color,
+    source, project_id?}.
+
+    Parameters
+    ----------
+    database_id : str
+        The 32-char Notion database id. Treated as opaque; never logged.
+        Empty string is the "no DB configured" signal — returns [] without
+        calling the API.
+    date_from : str
+        Inclusive lower bound, ISO-8601 date (YYYY-MM-DD).
+    date_to : str
+        Inclusive upper bound, ISO-8601 date (YYYY-MM-DD).
+
+    Returns
+    -------
+    list[dict]
+        Notion page objects, or [] on any failure path (token unset, HTTP
+        error, network timeout, JSON parse error). Never raises — mirrors
+        `query_active_projects` / `query_recent_reviews` shape.
+
+    Notes
+    -----
+    The filter hard-codes the property name "Date" because that is Notion's
+    default for date-typed properties and matches the convention used by the
+    rest of this module. Users whose calendar DB uses a different property
+    name (e.g. "When", "Start") can fork this helper or override via a future
+    `property_name` kwarg — not in scope for v1.
+
+    Security
+    --------
+    Never prints the token (delegated to `_request`). Never prints the
+    `database_id` in error paths — Notion DB ids leak collaboration scope and
+    are mildly sensitive even though they are not credentials.
+    """
+    if not database_id:
+        return []
+    body = {
+        "filter": {
+            "property": "Date",
+            "date": {"on_or_after": date_from, "on_or_before": date_to},
+        },
+        "page_size": 100,
+    }
+    r = _request("POST", f"/databases/{database_id}/query", body)
+    return (r or {}).get("results", [])
+
+
+def query_reviews_since(since_iso: str, *, project_id: str | None = None,
+                        page_size: int = 100) -> list[dict]:
+    """All Reviews rows created on or after since_iso, newest first.
+    Paginates via start_cursor until has_more is False. If project_id is
+    given, filters to that project's relation. Additive helper for the
+    analytics aggregator (REQ-05)."""
+    db = _db("reviews")
+    if not db:
+        return []
+    page_size = min(max(page_size, 1), 100)
+    date_filter = {"property": "Created", "date": {"on_or_after": since_iso}}
+    if project_id:
+        filter_clause = {
+            "and": [
+                date_filter,
+                {"property": "Project", "relation": {"contains": project_id}},
+            ]
+        }
+    else:
+        filter_clause = date_filter
+    body: dict = {
+        "sorts": [{"property": "Created", "direction": "descending"}],
+        "page_size": page_size,
+        "filter": filter_clause,
+    }
+    results: list[dict] = []
+    while True:
+        r = _request("POST", f"/databases/{db}/query", body)
+        if not r:
+            break
+        results.extend(r.get("results", []))
+        if not r.get("has_more"):
+            break
+        next_cursor = r.get("next_cursor")
+        if not next_cursor:
+            break
+        body["start_cursor"] = next_cursor
+    return results

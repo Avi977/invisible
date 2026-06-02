@@ -57,6 +57,7 @@ overwritten on the next push.
 
 ### Documentation
 
+- update CHANGELOG (rebase) (af17141)
 - **INV-02:** record Task 6 self-check in SUMMARY (e8294bb)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)

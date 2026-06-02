@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -41,6 +43,37 @@ FAIL = "FAIL"
 ICON = {PASS: "✓", WARN: "•", FAIL: "✗"}
 COLOR = {PASS: "\033[32m", WARN: "\033[33m", FAIL: "\033[31m"}
 RESET = "\033[0m"
+
+
+# Host-validation regex — MUST match lib/api/tree_vps.py::_HOST_RE (line 113).
+# Defense-in-depth gate for T-INV01H-03; any edit here MUST also be applied to
+# lib/api/tree_vps.py and vice versa, otherwise the doctor and the walker will
+# disagree about which hosts are acceptable.
+_HOST_RE = re.compile(r"^(?:[A-Za-z0-9_.-]+@)?[A-Za-z0-9._-]+$")
+
+
+def _sanitize_ssh_stderr(line: str) -> str:
+    """Redact filesystem-revealing content from an SSH stderr snippet.
+
+    Strips macOS / Linux absolute paths under user home dirs (`/Users/<name>/...`,
+    `/home/<name>/...`) and `id_*` / `*.pem` keyfile names. Keeps the line under
+    120 chars (matches the original snippet truncation).
+
+    Mitigates T-INV01H-04 — the doctor's FAIL detail string must never leak
+    `~/.ssh/id_ed25519` or similar paths into CI logs / shared-screen capture.
+    """
+    s = line or ""
+    # Replace user-home paths first (the path tokens may themselves contain
+    # `id_*` substrings; doing paths first avoids double-substituting).
+    s = re.sub(r"/Users/[^/ \t]+/[^\s]*", "<path>", s)
+    s = re.sub(r"/home/[^/ \t]+/[^\s]*", "<path>", s)
+    # Identity-file basenames (id_rsa, id_ed25519, id_special, …).
+    s = re.sub(r"\bid_[A-Za-z0-9_]+\b", "<keyfile>", s)
+    # PEM files anywhere.
+    s = re.sub(r"\b[\w.-]+\.pem\b", "<keyfile>", s)
+    if len(s) > 120:
+        s = s[:120]
+    return s
 
 
 def report(results: list[tuple[str, str, str]]) -> int:
@@ -163,16 +196,92 @@ def check_repos(cfg: dict) -> list[tuple[str, str, str]]:
 
 
 def check_ssh(cfg: dict) -> tuple[str, str, str]:
+    """Probe the VPS over SSH and report the ControlMaster reuse state.
+
+    Behavior, in order:
+      1. Empty / missing ``vps.host`` → WARN (matches the
+         ``VPS_NOT_CONFIGURED`` graceful-degradation contract in
+         ``lib/api/tree_vps.py walk_all``).
+      2. Host failing the validation regex → FAIL (bad value is NOT echoed
+         back; avoids log-injection in CI output).
+      3. First ``ssh ... echo ok`` succeeds → run it again and time the second
+         call. Second call under 200ms → ``master=cached`` (ControlMaster
+         reuse confirmed). Slower → ``master=new`` (auth works but multiplex
+         not wired; suggest adding ControlMaster directives to ~/.ssh/config).
+      4. First call fails → FAIL with a sanitized one-line stderr snippet.
+
+    Worst-case runtime is bounded: first ssh has a 12s outer timeout (8s
+    ConnectTimeout + slack), second has a 6s timeout. Documented under
+    T-INV01H-06 in the threat register.
+
+    The ``ssh`` argv deliberately omits ``-i <identity>`` — the doctor is
+    verifying the user's normal interactive SSH path, so identity resolution
+    should follow ``~/.ssh/config`` (not invisible.toml).
+    """
     vps = (cfg.get("vps") or {})
-    host = vps.get("host")
+    host = (vps.get("host") or "").strip()
     if not host:
-        return ("ssh: vps.host", WARN, "no vps.host configured")
-    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host, "true"]
-    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if r.returncode == 0:
-        return (f"ssh: {host}", PASS, "non-interactive auth works")
-    snippet = (r.stderr.strip().splitlines() or [""])[0][:120]
-    return (f"ssh: {host}", FAIL, snippet or f"rc={r.returncode}")
+        return (
+            "ssh: vps.host",
+            WARN,
+            "no vps.host configured — Folders/VPS column will return 503 "
+            "(graceful degradation, by design)",
+        )
+    if not _HOST_RE.match(host):
+        return (
+            f"ssh: {host}",
+            FAIL,
+            "invalid host value — must match "
+            "^(?:[A-Za-z0-9_.-]+@)?[A-Za-z0-9._-]+$",
+        )
+
+    argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+            host, "echo", "ok"]
+
+    # First invocation — cold (may set up the ControlMaster).
+    try:
+        t0 = time.perf_counter()
+        r1 = subprocess.run(argv, capture_output=True, text=True,
+                            timeout=12, check=False)
+        _t1 = time.perf_counter() - t0  # noqa: F841 — kept for future timing reports
+    except subprocess.TimeoutExpired:
+        return (f"ssh: {host}", FAIL, "first ssh timed out (>12s)")
+
+    if r1.returncode != 0:
+        first_line = (r1.stderr.strip().splitlines() or [""])[0]
+        snippet = _sanitize_ssh_stderr(first_line)
+        if not snippet:
+            snippet = f"rc={r1.returncode}"
+        return (f"ssh: {host}", FAIL, snippet)
+
+    if "ok" not in (r1.stdout or ""):
+        return (
+            f"ssh: {host}",
+            WARN,
+            "auth ok but echo output unexpected — check remote shell",
+        )
+
+    # Second invocation — timing probe for ControlMaster reuse.
+    try:
+        t0 = time.perf_counter()
+        r2 = subprocess.run(argv, capture_output=True, text=True,
+                            timeout=6, check=False)
+        t2 = time.perf_counter() - t0
+    except subprocess.TimeoutExpired:
+        return (f"ssh: {host}", PASS,
+                "non-interactive auth works · master=lost (second ssh timed out)")
+
+    if r2.returncode != 0:
+        return (f"ssh: {host}", PASS, "non-interactive auth works · master=lost")
+
+    if t2 < 0.200:
+        return (f"ssh: {host}", PASS, "non-interactive auth works · master=cached")
+    return (
+        f"ssh: {host}",
+        PASS,
+        f"non-interactive auth works · master=new ({t2 * 1000:.0f}ms — "
+        "add ControlMaster to ~/.ssh/config)",
+    )
 
 
 def check_codex_login() -> tuple[str, str, str]:
