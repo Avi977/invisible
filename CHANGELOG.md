@@ -99,6 +99,7 @@ overwritten on the next push.
 
 ### Chores
 
+- **planning:** bootstrap M2 — 6 workstreams + recovery cleanup script (47d0065)
 - **gitignore:** untrack START_HERE.md (per-worktree scaffold) (d5c369b)
 - **planning:** untrack .planning/active-workstream (989c449)
 
