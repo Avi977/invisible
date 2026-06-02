@@ -15,6 +15,10 @@ overwritten on the next push.
 
 ### Features
 
+- **INV-01-02:** remove TOOL_WORKFLOWS mock + fix ProjectPicker + gitignore workflows/ (0ded410)
+- **INV-01-02:** load workflow on switch + debounced autosave + status footer (ca4be48)
+- **01-01:** wire /api/v1/tools into daemon (GET branch, do_PUT, do_DELETE) (af2a9b2)
+- **01-01:** implement /api/v1/tools CRUD module (f70e00a)
 - **01-01:** INVISIBLE_PTY_EXTRA_ORIGINS env var for sibling-workstream testing (ed21f33)
 - **01-02:** make Dashboard self-fetching with loading + error + fallback (89a3135)
 - **01-02:** add fetchProjects() helper to data.jsx for real /api/v1/projects (d0dd0f5)
@@ -43,6 +47,8 @@ overwritten on the next push.
 
 ### Bug Fixes
 
+- **01-01:** single-source loopback CORS + collapse duplicate do_OPTIONS (51deb7a)
+- **INV-01:** correct 01-02 depends_on to resolvable plan id (01-01) so it waves after backend (5706fa2)
 - **01-03:** TerminalPane name + 6-pane grid layout (12dc319)
 - **dashboard:** add CORS preflight + headers for bubble on :8090 (7ef22aa)
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
@@ -50,6 +56,16 @@ overwritten on the next push.
 
 ### Documentation
 
+- **phase-1:** complete phase execution — Tools page wired + verified (a84f80c)
+- **INV-01:** mark 01-02 complete — phase plans done (4892dbf)
+- **INV-01-02:** summary — Tools page wired + real-browser E2E verified (9e6efd1)
+- **INV-01:** mark 01-01 complete after wave 1 (5b97560)
+- **01-01:** record self-check PASSED in SUMMARY (d7ada2f)
+- **01-01:** complete /api/v1/tools CRUD backend plan (d0e854a)
+- **INV-01:** mark phase 1 executing (bca4928)
+- **INV-01:** fold plan-checker advisories into plans + init workstream STATE.md (0e44b2c)
+- **INV-01:** create phase plan for /api/v1/tools CRUD + Tools page wired (6f470a0)
+- **INV-01:** fix ROADMAP detail section + author phase context (fde5d60)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
 - **phase-01:** add security threat verification (16/16 closed) (f8daac6)
@@ -88,6 +104,7 @@ overwritten on the next push.
 
 ### Tests
 
+- **01-01:** add failing tests for /api/v1/tools CRUD (63b5624)
 - **01-01:** add failing tests for /api/v1/projects adapter (7f0565e)
 - **01-02:** verify reconnect persistence + add PLAN-02 verification log (8262065)
 - **01-01:** verify four threat-model gates end-to-end + log marker (1b241a5)
