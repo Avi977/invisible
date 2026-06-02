@@ -318,3 +318,58 @@ def query_recent_reviews(hours: int = 24, *, project_id: str | None = None,
         }
     r = _request("POST", f"/databases/{db}/query", body)
     return r.get("results", []) if r else []
+
+
+def query_calendar_db(database_id: str, date_from: str, date_to: str) -> list[dict]:
+    """Query a Notion calendar database for events in [date_from, date_to].
+
+    Used by lib/api/calendar.py to feed the Notion-source loader for the
+    /api/v1/calendar endpoint. Returns the raw Notion `results[]` list (each
+    element is a page object whose `properties` dict the caller flattens into
+    the canonical event shape). The caller — not this helper — is responsible
+    for mapping Notion property values into {id, title, start, end, color,
+    source, project_id?}.
+
+    Parameters
+    ----------
+    database_id : str
+        The 32-char Notion database id. Treated as opaque; never logged.
+        Empty string is the "no DB configured" signal — returns [] without
+        calling the API.
+    date_from : str
+        Inclusive lower bound, ISO-8601 date (YYYY-MM-DD).
+    date_to : str
+        Inclusive upper bound, ISO-8601 date (YYYY-MM-DD).
+
+    Returns
+    -------
+    list[dict]
+        Notion page objects, or [] on any failure path (token unset, HTTP
+        error, network timeout, JSON parse error). Never raises — mirrors
+        `query_active_projects` / `query_recent_reviews` shape.
+
+    Notes
+    -----
+    The filter hard-codes the property name "Date" because that is Notion's
+    default for date-typed properties and matches the convention used by the
+    rest of this module. Users whose calendar DB uses a different property
+    name (e.g. "When", "Start") can fork this helper or override via a future
+    `property_name` kwarg — not in scope for v1.
+
+    Security
+    --------
+    Never prints the token (delegated to `_request`). Never prints the
+    `database_id` in error paths — Notion DB ids leak collaboration scope and
+    are mildly sensitive even though they are not credentials.
+    """
+    if not database_id:
+        return []
+    body = {
+        "filter": {
+            "property": "Date",
+            "date": {"on_or_after": date_from, "on_or_before": date_to},
+        },
+        "page_size": 100,
+    }
+    r = _request("POST", f"/databases/{database_id}/query", body)
+    return (r or {}).get("results", [])
