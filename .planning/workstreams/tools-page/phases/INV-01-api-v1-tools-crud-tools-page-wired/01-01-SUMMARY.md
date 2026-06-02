@@ -135,6 +135,13 @@ None - no external service configuration required. (Pure stdlib; no new packages
 - The `workflows/` dir is created on first write under `config.home()`; Plan 01-02's D-16 (`.gitignore` add) should ensure per-machine `workflows/` is not committed when the daemon runs with `INVISIBLE_HOME=$(pwd)` in a worktree.
 - No blockers.
 
+## Self-Check: PASSED
+
+- Created files verified on disk: `lib/api/tools.py`, `tests/test_api_tools.py`, `01-01-SUMMARY.md` — all FOUND.
+- Task commits verified in git log: `63b5624` (test), `f70e00a` (feat), `af2a9b2` (feat), `51deb7a` (fix), `d0e854a` (docs/SUMMARY) — all FOUND.
+- Working tree clean; `STATE.md` and `ROADMAP.md` not modified (orchestrator owns them).
+- `tests/test_api_tools.py` 23/23 pass; sibling `tests/test_api_projects.py` 7/7 pass (no regression); live E2E 11/11 pass.
+
 ---
 *Phase: INV-01-api-v1-tools-crud-tools-page-wired*
 *Completed: 2026-06-02*
