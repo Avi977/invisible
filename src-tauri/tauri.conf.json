@@ -44,5 +44,13 @@
         "language": ["en-US"]
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Avi977/invisible/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxNDE4NDQ0NkQyMkQwMDkKUldRSjBDSnRSSVJCNGVvd01CeVk4S3N1dmNaMUwzY0pQems5NzJyZHptZ0tUZC8wT25TY0o1ZE0K"
+    }
   }
 }
