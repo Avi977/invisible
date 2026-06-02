@@ -66,8 +66,10 @@ if `src-tauri/` isn't on `main`.
 4. Update manifest (`latest.json`) generated and uploaded.
 5. Manual verification: tag a `v0.1.0-test`, watch CI, confirm artefacts appear on the release page.
 
-**Plans:** 1 plan (split if needed)
-- [ ] 03-01: Workflow file + secret wiring (signing certs as GitHub Actions secrets)
+**Plans:** 1 plan
+- [x] [03-01-PLAN.md](phases/INV-03-release-workflow-auto-updater/03-01-PLAN.md) — release.yml + bundle.createUpdaterArtifacts; first release gated on user uploading TAURI_SIGNING_PRIVATE_KEY to GHA secrets (see PHASE-VERIFICATION.md run-book).
+
+> **Reinterpretation per `phases/INV-03-release-workflow-auto-updater/03-CONTEXT.md` (2026-06-02):** Native CI runners (NOT cargo-xwin from macOS — that's Phase 1's local-only optimization). macOS-latest aarch64 + windows-latest native. Releases created as DRAFT; user reviews & publishes. Phase 2's LOCKED no-codesign / no-Dev-ID decisions still apply.
 
 ## Files this workstream OWNS
 

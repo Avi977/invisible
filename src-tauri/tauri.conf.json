@@ -33,17 +33,30 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "Personal multi-agent dev cockpit",
     "longDescription": "Native Tauri shell for the invisible cockpit. Loads the Vite-bundled React UI; bridges the invisible-dashboard event stream to the frontend.",
     "publisher": "The Profit Platform",
     "windows": {
       "wix": {
-        "language": ["en-US"]
+        "language": [
+          "en-US"
+        ]
       }
-    }
+    },
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {
