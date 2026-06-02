@@ -1,0 +1,127 @@
+name: ci
+
+# Trigger on every push to any branch, and on every pull request targeting main
+# (decision D-01). The lint/test/import-smoke signal then lands on feature
+# branches before they ever open a PR.
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+# Least privilege (threat T-01-02): every job here is read-only static analysis
+# plus a test run — none of them push, comment, or touch the API. Capping the
+# job token to `contents: read` is the smallest scope that still lets
+# actions/checkout fetch the tree, and bounds the blast radius if any step or
+# third-party action is compromised. This workflow uses NO secrets and plain
+# `pull_request` (never `pull_request_target`), so an untrusted PR head cannot
+# obtain write scope or secret access (threats T-01-03, and the EoP boundary).
+permissions:
+  contents: read
+
+# Three SEPARATE jobs (decision D-01) — not three steps in one job — so lint,
+# test, and import-smoke each surface an independent red/green status check.
+# Third-party actions are pinned to major version tags (threat T-01-01); these
+# are first-party GitHub actions (checkout = actions org, setup-python = actions
+# org), so major-tag pinning is the agreed bar this phase (full-SHA pinning is a
+# noted future hardening, not required here).
+jobs:
+  # ── lint ──────────────────────────────────────────────────────────────────
+  # Ruff over lib/ and bin/. ruff.toml supplies extend-include (so the 21
+  # extension-less bin/invisible-* Python scripts are linted) and a lenient
+  # rule set that passes the existing E402-heavy code on a fresh clone (D-02).
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Install ONLY ruff, pinned (decision D-05 — no project-wide manifest,
+      # no unpinned transitive surface; ruff is first-party Astral tooling).
+      - name: Install ruff
+        run: pip install ruff==0.15.15
+      - name: Ruff lint (lib/ + bin/)
+        run: ruff check lib/ bin/
+
+  # ── test ──────────────────────────────────────────────────────────────────
+  # pytest with PYTHONPATH=lib so `from api import ...` resolves (there is no
+  # lib/__init__.py; `api` is a top-level package reachable only via lib/ on the
+  # path — mirrors bin/invisible-dashboard). pyproject.toml supplies testpaths
+  # = ["tests", "lib/api"], collecting BOTH tests/test_api_projects.py and the
+  # colocated lib/api/test_chat.py (decision D-03). The api.* tree is pure
+  # stdlib, so no third-party runtime deps are installed (decision D-05).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Install ONLY pytest, pinned (decision D-05; pytest is first-party
+      # pytest-dev tooling).
+      - name: Install pytest
+        run: pip install pytest==9.0.3
+      - name: Run pytest
+        env:
+          PYTHONPATH: lib
+        run: pytest
+
+  # ── import-smoke ──────────────────────────────────────────────────────────
+  # No pip installs — the api.* package and every bin/invisible-* script are
+  # importable / compilable on pure stdlib (decision D-05). Two probes (D-04).
+  import-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Probe 1 — hard-import the 5 api.* submodules present on main; treat
+      # api.analytics as a SOFT import. analytics.py is stranded in PR #8 and
+      # raises ModuleNotFoundError today; a hard import would make this job red
+      # on a fresh clone (threat T-01-05, accepted). The try/except auto-covers
+      # the moment PR #8 lands. Mirrors bin/invisible-dashboard L62-64.
+      - name: import-smoke (api.*)
+        env:
+          PYTHONPATH: lib
+        run: |
+          python - <<'PY'
+          import importlib
+
+          present = [
+              "api.projects",
+              "api.chat",
+              "api.tree_local",
+              "api.tree_vps",
+              "api.tree_repo",
+          ]
+          for name in present:
+              importlib.import_module(name)
+              print(f"OK   import {name}")
+
+          try:
+              importlib.import_module("api.analytics")
+              print("OK   import api.analytics")
+          except ModuleNotFoundError:
+              print("WARN api.analytics absent (PR #8 not merged) — soft-skip")
+
+          print("import-smoke OK")
+          PY
+
+      # Probe 2 — py_compile (syntax + parseability) every Python bin/invisible-*
+      # script. NOT a full import: scripts like bin/invisible-pty need websockets
+      # / ptyprocess to import (the script documents a clean import-time error if
+      # they are missing). Skip the 2 bash scripts (invisible-review,
+      # invisible-update) by checking the shebang on the first line (D-04).
+      - name: bin syntax smoke (py_compile)
+        run: |
+          for f in bin/invisible-*; do
+            if head -1 "$f" | grep -q python; then
+              python -m py_compile "$f"
+              echo "OK   py_compile $f"
+            else
+              echo "SKIP $f (not a python script)"
+            fi
+          done
+          echo "bin py_compile OK"
