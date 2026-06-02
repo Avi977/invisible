@@ -43,7 +43,7 @@ filters by type, so emit all and let the frontend choose):
 5. `frontend/pages/relations.jsx` swaps from mock to fetch on mount.
 6. Cache the derivation per-project for 60s.
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 - [x] 01-01: Backend — `lib/api/relations.py` with the 3 derivers + a unified `build_graph(project)`; 60s cache **(SHIPPED 2026-06-02 — see 01-01-SUMMARY.md)**
 - [x] 01-02: Frontend — `frontend/pages/relations.jsx` swap; preserve existing visual + interactions (drag, hover-focus, filter chips) **(SHIPPED 2026-06-02 — see 01-02-SUMMARY.md; includes Wave 2 deviation `c18ca74` removing duplicate ACAO header in `bin/invisible-dashboard` that was breaking browser CORS; human-verified via Chrome DevTools MCP — 5/5 checks PASS)**
 

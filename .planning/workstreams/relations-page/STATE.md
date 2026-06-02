@@ -4,9 +4,9 @@ milestone: v1.0
 milestone_name: M2
 current_phase: 1
 current_plan: 2
-status: shipped
-stopped_at: N/A
-last_updated: "2026-06-02T04:54:00.000Z"
+status: milestone_complete
+stopped_at: Milestone complete (Phase 1 was final phase)
+last_updated: 2026-06-02T05:07:31.619Z
 last_activity: 2026-06-02
 progress:
   total_phases: 1
@@ -22,15 +22,15 @@ progress:
 
 Phase: 1 (/api/v1/relations + Relations page wired) — **COMPLETE**
 Plan: 2 of 2 (both 01-01 backend AND 01-02 frontend SHIPPED)
-**Status:** Workstream Phase 1 complete — relations API + Relations page both wired end-to-end and human-verified in the browser
-**Current Phase:** 1 (DONE)
+**Status:** Milestone complete
+**Current Phase:** 1
 **Last Activity:** 2026-06-02
 **Last Activity Description:** Plan 01-02 SHIPPED — relations frontend wired (`68d9b8a` Task 1, `c73a452` Task 2), CORS fix `c18ca74` (Wave 2 deviation), Task 3 human-verify APPROVED via Chrome DevTools MCP (5/5 checks PASS), SUMMARY written
 
 ## Progress
 
 **Phases Complete:** 1 of 1 (100%)
-**Current Plan:** N/A (workstream Phase 1 complete)
+**Current Plan:** Not started
 **Plans Complete:** 2 of 2 (100%)
 
 ## Plan 01-01 Outcome (backend)
