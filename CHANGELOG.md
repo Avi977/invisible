@@ -15,6 +15,11 @@ overwritten on the next push.
 
 ### Features
 
+- **INV-01-02:** remove ANALYTICS mock from data.jsx (c83708d)
+- **INV-01-02:** wire analytics.jsx to GET /api/v1/analytics with 30s polling (ca94c44)
+- **INV-01-01:** wire GET /api/v1/analytics route into invisible-dashboard (a1b0093)
+- **INV-01-01:** aggregator with 30s cache + Notion UUID→slug map (dd70a5d)
+- **INV-01-01:** persist usage telemetry on review rows (18e885e)
 - **01-01:** INVISIBLE_PTY_EXTRA_ORIGINS env var for sibling-workstream testing (ed21f33)
 - **01-02:** make Dashboard self-fetching with loading + error + fallback (89a3135)
 - **01-02:** add fetchProjects() helper to data.jsx for real /api/v1/projects (d0dd0f5)
@@ -43,6 +48,7 @@ overwritten on the next push.
 
 ### Bug Fixes
 
+- **INV-01-02:** add CORS header to dashboard JSON/text responses (e6e31e6)
 - **01-03:** TerminalPane name + 6-pane grid layout (12dc319)
 - **dashboard:** add CORS preflight + headers for bubble on :8090 (7ef22aa)
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
@@ -50,6 +56,11 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-01:** phase verification PASS — REQ-05 complete (f6d07aa)
+- **INV-01-02:** summary — frontend wiring + live UAT + CORS fix complete (7dafaed)
+- **INV-01-01:** summary — backend aggregator + 30s cache complete (ac5b259)
+- **01:** begin phase 1 — analytics aggregator + frontend wiring (3ad00be)
+- **01:** plan phase 1 analytics aggregator + frontend wiring (22de387)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
 - **phase-01:** add security threat verification (16/16 closed) (f8daac6)
