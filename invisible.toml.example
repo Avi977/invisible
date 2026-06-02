@@ -108,3 +108,24 @@ cwd = "~/code"
 id = "vps-srv"
 kind = "ssh"
 host = "srv982719"
+
+# ── Calendar ────────────────────────────────────────────────────────────
+# Event sources for the Calendar page. All three are optional; if none are
+# set, /api/v1/calendar returns []. iCal URLs MUST use https:// and resolve
+# to public addresses — RFC1918 / loopback / link-local hosts are rejected
+# by the SSRF guard in lib/api/calendar._safe_ics_url.
+#
+# A third source — ~/.invisible/events.json — is auto-discovered when the
+# file exists and does NOT need to be configured here. Schema is a JSON
+# array of {title, start, end, color?, project_id?} objects (RFC3339 times).
+
+[calendar]
+# 32-char Notion database id of your calendar database. Leave empty to
+# disable the Notion source. The database must have a "Date" property
+# (Notion's default date-property type); optionally a "Color" select
+# property whose option names are #RRGGBB hex codes, and a "Project"
+# relation property to link events to project rows for color resolution.
+notion_database_id = ""
+# Public iCal feed URLs. Example:
+#   ["https://calendar.google.com/calendar/ical/YOUR_ID/public/basic.ics"]
+ics_urls = []
