@@ -13,28 +13,33 @@ if `src-tauri/` isn't on `main`.
 
 ## Phases
 
-- [ ] **Phase 1: Windows `.msi` cross-compile** — `cargo xwin` or NSIS bundler from macOS
+- [ ] **Phase 1: Windows NSIS `.exe` cross-compile** (was MSI; Tauri 2.x bundler architecture) — `cargo xwin` + NSIS from macOS
 - [ ] **Phase 2: macOS `.app` + `.dmg` with signing** — Developer ID Application cert
 - [ ] **Phase 3: GitHub Actions `release.yml` + auto-updater** — tag-triggered builds + signed update manifest
 
-## Phase 1 Details — Windows .msi cross-compile
+## Phase Details
 
-**Goal:** `cargo tauri build --target x86_64-pc-windows-msvc` produces a working `.msi` from this Mac. Installable on a fresh Windows 11 box; launches the app, connects to a configured `INVISIBLE_SERVER_URL`, file dashboard works.
+### Phase 1: Windows NSIS `.exe` cross-compile
 
-**Approach:** Use `cargo xwin` (cross-compile via Microsoft's MSVC stub) — avoids needing a Windows VM. Tauri 2.x's WiX-based bundler runs on macOS for the .msi step.
+> **Note:** Phase dir slug is `INV-01-windows-msi-cross-compile` for git-history continuity. The phase historically targeted MSI but switched to NSIS during execution because Tauri 2.x's MSI bundler is `#[cfg(target_os = "windows")]`-gated (`tauri-bundler-2.9.2/src/bundle.rs:176-179`) and cannot run from macOS. NSIS is the supported cross-compile path on Tauri 2.x.
+
+**Goal:** `cargo tauri build --target x86_64-pc-windows-msvc` produces a working NSIS `.exe` installer from this Mac. Installable on a fresh Windows 11 box; launches the app, connects to a configured `INVISIBLE_SERVER_URL`, file dashboard works.
+
+**Approach:** `cargo xwin` (cross-compile via Microsoft's MSVC stub) for the Rust binary, then Tauri's bundler invokes `makensis` (Homebrew) for the NSIS installer. No Windows VM needed.
 
 **Success criteria:**
 1. `cargo xwin --version` resolves; `cargo install cargo-xwin` adds it.
-2. `src-tauri/tauri.conf.json` `bundle.targets` includes `"msi"` (already there from PR #7).
-3. `src-tauri/tauri.conf.json` has a `bundle.windows.wix` block with productName, manufacturer, upgradeCode (uuidgen'd once and locked).
-4. `cargo tauri build --target x86_64-pc-windows-msvc` succeeds; output at `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Invisible_0.1.0_x64_en-US.msi` (or similar).
-5. SHA256 of the .msi captured in `PHASE-VERIFICATION.md`.
+2. `src-tauri/tauri.conf.json` `bundle.targets` includes `"nsis"`.
+3. `src-tauri/tauri.conf.json` retains the `bundle.windows.wix` block (harmless under NSIS; reserved for a future signing path); `publisher` is set.
+4. `cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc` succeeds; output at `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Invisible_0.1.0_x64-setup.exe`.
+5. SHA256 of the `.exe` captured in `PHASE-VERIFICATION.md`.
+6. Installer size in the 3–8 MB range (NSIS payload is LZMA-compressed; outer installer is much smaller than MSI's 15–40 MB and smaller than the uncompressed Tauri binary which is ~14 MB).
 
 **Plans:** 2 plans
-- [ ] 01-01: Install `cargo xwin`, configure WiX block in tauri.conf.json, first successful Windows build
-- [ ] 01-02: Smoke-test the .msi (manually on a Windows VM, or via documented checklist if no VM available)
+- [ ] 01-01: Install `cargo xwin` + `makensis`, configure NSIS bundle target in tauri.conf.json, first successful Windows build
+- [ ] 01-02: Smoke-test the `.exe` (manually on a Windows VM, or via documented checklist if no VM available)
 
-## Phase 2 Details — macOS .app + .dmg with signing
+### Phase 2: macOS .app + .dmg with signing
 
 **Goal:** Signed + notarised `.app` and `.dmg` so users get no Gatekeeper warning.
 
@@ -48,7 +53,7 @@ if `src-tauri/` isn't on `main`.
 - [ ] 02-01: macOS build pipeline (with or without signing, per cert availability)
 - [ ] 02-02: Auto-updater public key + signing key pair generated, stored in Infisical, referenced from tauri.conf.json
 
-## Phase 3 Details — GitHub Actions `release.yml`
+### Phase 3: GitHub Actions release.yml + auto-updater
 
 **Goal:** Tag-triggered release pipeline: `git tag v0.1.0 && git push --tags` produces signed Windows + macOS binaries attached to a GitHub Release, plus a Tauri update manifest.
 
@@ -88,8 +93,9 @@ cd src-tauri
 
 # Phase 1
 cargo install cargo-xwin
-cargo tauri build --target x86_64-pc-windows-msvc
-ls target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+brew install nsis  # provides makensis for the NSIS bundler
+cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+ls target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
 
 # Phase 2 (signing optional)
 cargo tauri build
