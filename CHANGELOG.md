@@ -15,6 +15,7 @@ overwritten on the next push.
 
 ### Features
 
+- **INV-01-02:** wire Calendar page to /api/v1/calendar (18b2b33)
 - **INV-01-01:** register /api/v1/calendar + fix registry dispatch return (e9c6435)
 - **INV-01-01:** lib/api/calendar.py — 3-source aggregator with SSRF guards (8a3d961)
 - **INV-01-01:** query_calendar_db helper in lib/notion.py (57a6261)
@@ -46,6 +47,7 @@ overwritten on the next push.
 
 ### Bug Fixes
 
+- **INV-01-02:** dedupe Access-Control-Allow-Origin header on JSON responses (a0fc83b)
 - **01-03:** TerminalPane name + 6-pane grid layout (12dc319)
 - **dashboard:** add CORS preflight + headers for bubble on :8090 (7ef22aa)
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
@@ -53,6 +55,7 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-01-01:** summary — /api/v1/calendar shipped with 3 sources + SSRF + cache (df9aeb7)
 - **INV-01-01:** [calendar] block in invisible.toml.example (0df89ff)
 - **ws/calendar-events:** plan phase 1 — calendar API + frontend wiring (4b877a1)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
