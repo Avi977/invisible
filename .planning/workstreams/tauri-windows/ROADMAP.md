@@ -49,9 +49,11 @@ if `src-tauri/` isn't on `main`.
 3. If signing is configured: `codesign --verify --verbose` returns 0; `spctl -a -t exec` reports accepted.
 4. Tauri auto-updater config has the public key + endpoint URL placeholders ready (filled in Phase 3).
 
+> **Reinterpretation per `phases/INV-02-macos-app-dmg-with-signing/02-CONTEXT.md` (2026-06-02):** User declined the $99/year Apple Developer Program. Phase 2 ships UNSIGNED with a README workaround (criteria #1 and #3 reinterpreted as documented "ship unsigned + user workaround"). Phase 2.x (deferred) can add signing later without replanning.
+
 **Plans:** 2 plans
-- [ ] 02-01: macOS build pipeline (with or without signing, per cert availability)
-- [ ] 02-02: Auto-updater public key + signing key pair generated, stored in Infisical, referenced from tauri.conf.json
+- [ ] [02-01-PLAN.md](phases/INV-02-macos-app-dmg-with-signing/02-01-PLAN.md) — Native macOS build verify (.app + .dmg) + `## Installation (macOS)` README section
+- [ ] [02-02-PLAN.md](phases/INV-02-macos-app-dmg-with-signing/02-02-PLAN.md) — Tauri updater keypair (private -> Infisical, public -> `plugins.updater` in `tauri.conf.json`)
 
 ### Phase 3: GitHub Actions release.yml + auto-updater
 
