@@ -34,6 +34,10 @@ worktrees/
 checkpoints/
 .invisible-checkpoint.json
 .invisible-state/
+# per-machine tool-workflow state (daemon-created under the repo root when run
+# with INVISIBLE_HOME=$(pwd) inside a worktree — see INV-01 D-16).
+# Anchored to repo root so it does NOT match .github/workflows/.
+/workflows/
 
 # ── GSD per-worktree state ─────────────────────────────────────────────
 # Active workstream is per-worktree, not shared. Each git worktree picks
@@ -59,7 +63,9 @@ Thumbs.db
 # ── Tauri / Node (future UI shell) ─────────────────────────────────────
 node_modules/
 src-tauri/target/
-src-tauri/Cargo.lock
+# Cargo.lock is INTENTIONALLY committed for the binary crate
+# (Rust convention; Phase 3's signed/notarised macOS builds need
+# reproducible deps). Do not re-add it here.
 dist/
 *.dmg
 *.msi

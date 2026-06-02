@@ -1,0 +1,121 @@
+# Workstream: tauri-windows (M2 — production Tauri builds)
+
+> Sister-workstreams: vps-connection, tools-page, relations-page,
+> calendar-events, ci-and-onboarding. Fully isolated — operates inside
+> `src-tauri/` only, plus one new GitHub Actions workflow.
+
+## Prerequisite
+
+**PR #7 must merge first** (lands `src-tauri/` in main). This workstream
+extends what PR #7 brings. If PR #7 isn't merged when you start, your
+first action is to wait — `/gsd:plan-phase 1` should error out cleanly
+if `src-tauri/` isn't on `main`.
+
+## Phases
+
+- [ ] **Phase 1: Windows NSIS `.exe` cross-compile** (was MSI; Tauri 2.x bundler architecture) — `cargo xwin` + NSIS from macOS
+- [ ] **Phase 2: macOS `.app` + `.dmg` with signing** — Developer ID Application cert
+- [ ] **Phase 3: GitHub Actions `release.yml` + auto-updater** — tag-triggered builds + signed update manifest
+
+## Phase Details
+
+### Phase 1: Windows NSIS `.exe` cross-compile
+
+> **Note:** Phase dir slug is `INV-01-windows-msi-cross-compile` for git-history continuity. The phase historically targeted MSI but switched to NSIS during execution because Tauri 2.x's MSI bundler is `#[cfg(target_os = "windows")]`-gated (`tauri-bundler-2.9.2/src/bundle.rs:176-179`) and cannot run from macOS. NSIS is the supported cross-compile path on Tauri 2.x.
+
+**Goal:** `cargo tauri build --target x86_64-pc-windows-msvc` produces a working NSIS `.exe` installer from this Mac. Installable on a fresh Windows 11 box; launches the app, connects to a configured `INVISIBLE_SERVER_URL`, file dashboard works.
+
+**Approach:** `cargo xwin` (cross-compile via Microsoft's MSVC stub) for the Rust binary, then Tauri's bundler invokes `makensis` (Homebrew) for the NSIS installer. No Windows VM needed.
+
+**Success criteria:**
+1. `cargo xwin --version` resolves; `cargo install cargo-xwin` adds it.
+2. `src-tauri/tauri.conf.json` `bundle.targets` includes `"nsis"`.
+3. `src-tauri/tauri.conf.json` retains the `bundle.windows.wix` block (harmless under NSIS; reserved for a future signing path); `publisher` is set.
+4. `cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc` succeeds; output at `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Invisible_0.1.0_x64-setup.exe`.
+5. SHA256 of the `.exe` captured in `PHASE-VERIFICATION.md`.
+6. Installer size in the 3–8 MB range (NSIS payload is LZMA-compressed; outer installer is much smaller than MSI's 15–40 MB and smaller than the uncompressed Tauri binary which is ~14 MB).
+
+**Plans:** 2 plans
+- [ ] 01-01: Install `cargo xwin` + `makensis`, configure NSIS bundle target in tauri.conf.json, first successful Windows build
+- [ ] 01-02: Smoke-test the `.exe` (manually on a Windows VM, or via documented checklist if no VM available)
+
+### Phase 2: macOS .app + .dmg with signing
+
+**Goal:** Signed + notarised `.app` and `.dmg` so users get no Gatekeeper warning.
+
+**Success criteria:**
+1. Developer ID Application certificate is documented (probably ask the user — they may not have one yet; if so, defer notarisation and ship unsigned with a documented "right-click → Open" workaround).
+2. `cargo tauri build` (no target = current macOS) produces `.app` and `.dmg`.
+3. If signing is configured: `codesign --verify --verbose` returns 0; `spctl -a -t exec` reports accepted.
+4. Tauri auto-updater config has the public key + endpoint URL placeholders ready (filled in Phase 3).
+
+> **Reinterpretation per `phases/INV-02-macos-app-dmg-with-signing/02-CONTEXT.md` (2026-06-02):** User declined the $99/year Apple Developer Program. Phase 2 ships UNSIGNED with a README workaround (criteria #1 and #3 reinterpreted as documented "ship unsigned + user workaround"). Phase 2.x (deferred) can add signing later without replanning.
+
+**Plans:** 2 plans
+- [ ] [02-01-PLAN.md](phases/INV-02-macos-app-dmg-with-signing/02-01-PLAN.md) — Native macOS build verify (.app + .dmg) + `## Installation (macOS)` README section
+- [ ] [02-02-PLAN.md](phases/INV-02-macos-app-dmg-with-signing/02-02-PLAN.md) — Tauri updater keypair (private -> Infisical, public -> `plugins.updater` in `tauri.conf.json`)
+
+### Phase 3: GitHub Actions release.yml + auto-updater
+
+**Goal:** Tag-triggered release pipeline: `git tag v0.1.0 && git push --tags` produces signed Windows + macOS binaries attached to a GitHub Release, plus a Tauri update manifest.
+
+**Success criteria:**
+1. `.github/workflows/release.yml` runs on tag pushes.
+2. Two jobs: `build-windows` (cross-compile from ubuntu-latest or macOS-latest with cargo xwin) and `build-macos` (native).
+3. Both upload artefacts to the GitHub Release.
+4. Update manifest (`latest.json`) generated and uploaded.
+5. Manual verification: tag a `v0.1.0-test`, watch CI, confirm artefacts appear on the release page.
+
+**Plans:** 1 plan
+- [x] [03-01-PLAN.md](phases/INV-03-release-workflow-auto-updater/03-01-PLAN.md) — release.yml + bundle.createUpdaterArtifacts; first release gated on user uploading TAURI_SIGNING_PRIVATE_KEY to GHA secrets (see PHASE-VERIFICATION.md run-book).
+
+> **Reinterpretation per `phases/INV-03-release-workflow-auto-updater/03-CONTEXT.md` (2026-06-02):** Native CI runners (NOT cargo-xwin from macOS — that's Phase 1's local-only optimization). macOS-latest aarch64 + windows-latest native. Releases created as DRAFT; user reviews & publishes. Phase 2's LOCKED no-codesign / no-Dev-ID decisions still apply.
+
+## Files this workstream OWNS
+
+- `src-tauri/tauri.conf.json` — `bundle.windows.wix.*` and `bundle.macOS.signingIdentity` additions only (do NOT touch identifier, devUrl, frontendDist, beforeDevCommand)
+- `src-tauri/Cargo.toml` — may add `[target.'cfg(windows)'.dependencies]` if needed
+- `.github/workflows/release.yml` — new file
+
+## Files this workstream EDITS LIGHTLY
+
+- `README.md` — add a "Download" section with link to Releases page
+- `ROADMAP.md` (project-level) — tick Phase 3 sub-items as they complete
+
+## Files this workstream MUST NOT TOUCH
+
+- `frontend/` and `frontend-vite/` — locked.
+- `bin/invisible-*`, `lib/*.py` — sibling workstreams own these.
+- `src-tauri/src/*.rs` — locked from PR #7.
+- `.github/workflows/ci.yml`, `.github/workflows/security-review.yml` — owned by `ci-and-onboarding`.
+
+## Verify locally
+
+```bash
+source "$HOME/.cargo/env"
+cd src-tauri
+
+# Phase 1
+cargo install cargo-xwin
+brew install nsis  # provides makensis for the NSIS bundler
+cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+ls target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+
+# Phase 2 (signing optional)
+cargo tauri build
+ls target/release/bundle/dmg/*.dmg
+codesign --verify --verbose target/release/bundle/macos/Invisible.app
+
+# Phase 3
+gh workflow run release.yml -f tag=v0.1.0-test
+gh run watch
+```
+
+## Resume in a fresh Claude session
+
+```bash
+cd ~/.invisible-ws/tauri-windows
+gsd-sdk query workstream.set tauri-windows --raw --cwd .
+# then in Claude:
+/gsd:plan-phase 1
+```

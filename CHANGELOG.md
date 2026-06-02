@@ -50,6 +50,13 @@ overwritten on the next push.
 
 ### Documentation
 
+- record no-API-keys design constraint + PR #3 revert in context (955fc67)
+- **INV-01:** reflect PR #3 revert — security-review needs an API key (conflicts with no-API-key CLI design) (3ff5e36)
+- **INV-01:** mark Phase 1 complete in workstream STATE (7d1cfa8)
+- **INV-01:** add phase verification — goal achieved 12/12; 3 owner follow-ups (7ed36ab)
+- **INV-01:** plan 01-02 complete — PR #3 merged, CI green on GitHub (e700b14)
+- **INV-01-02:** summarize plan 01-02 (CI green + badge + runbook); Task 3 awaiting human merge approval (e5dce58)
+- **INV-01-02:** add CI badge to README + branch-protection runbook (dec86a2)
 - **INV-01:** mark plan 01-01 complete (CI pipeline files landed) (0647f68)
 - **INV-01-01:** add execution summary for CI pipeline plan (dd0181d)
 - **INV-01:** add phase context, patterns, and workstream state (aa51236)

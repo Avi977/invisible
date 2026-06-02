@@ -1,0 +1,24 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability set for Invisible desktop shell",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        { "name": "invisible-status",  "cmd": "invisible-status",  "args": true, "sidecar": false },
+        { "name": "invisible-review",  "cmd": "invisible-review",  "args": true, "sidecar": false },
+        { "name": "invisible-ps",      "cmd": "invisible-ps",      "args": true, "sidecar": false },
+        { "name": "invisible-log",     "cmd": "invisible-log",     "args": true, "sidecar": false }
+      ]
+    }
+  ]
+}

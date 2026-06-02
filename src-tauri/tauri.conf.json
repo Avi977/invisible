@@ -1,0 +1,69 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Invisible",
+  "version": "0.1.0",
+  "identifier": "com.theprofitplatform.invisible",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../frontend-vite/dist",
+    "beforeDevCommand": "cd frontend-vite && pnpm dev",
+    "beforeBuildCommand": "cd frontend-vite && pnpm build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Invisible",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 700,
+        "minHeight": 500,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "visible": true,
+        "backgroundColor": "#0d0f12"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Personal multi-agent dev cockpit",
+    "longDescription": "Native Tauri shell for the invisible cockpit. Loads the Vite-bundled React UI; bridges the invisible-dashboard event stream to the frontend.",
+    "publisher": "The Profit Platform",
+    "windows": {
+      "wix": {
+        "language": [
+          "en-US"
+        ]
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Avi977/invisible/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxNDE4NDQ0NkQyMkQwMDkKUldRSjBDSnRSSVJCNGVvd01CeVk4S3N1dmNaMUwzY0pQems5NzJyZHptZ0tUZC8wT25TY0o1ZE0K"
+    }
+  }
+}

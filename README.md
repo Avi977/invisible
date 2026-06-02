@@ -38,6 +38,42 @@ same code runs identically on every machine.
 - `invisible-dashboard` — server-rendered HTML + JSON API on `127.0.0.1:8765` (the React frontend's data backend)
 - `invisible-server` — VPS-side daemon mirroring the dashboard remotely
 
+### Tauri shell (Phase 2 — preview)
+
+A native desktop shell built on **Tauri 2.x** lives in [`src-tauri/`](./src-tauri/) and loads the Vite-built `frontend-vite/dist/` into a system webview. Develop against it with `cd src-tauri && cargo tauri dev` — Tauri's `beforeDevCommand` spins up the Vite dev server on `localhost:5173` before opening the native window, so HMR works end-to-end. A local release `.app` is produced with `cargo tauri build`, which drops `target/release/bundle/macos/Invisible.app`. Requires `rustc` 1.95+ and `cargo-tauri` 2.11.x (install with `cargo install tauri-cli@2.11.2 --locked` if you don't already have the CLI).
+
+The shell exposes 5 Rust `#[tauri::command]` wrappers around the existing CLI surface — `list_projects`, `run_orchestrator`, `kill_run`, `tail_log`, `status` — registered through `tauri::generate_handler!` in `src-tauri/src/lib.rs` and gated by an explicit `shell:allow-execute` allow-list in `src-tauri/capabilities/default.json` (no wildcards: only `invisible-status`, `invisible-review`, `invisible-ps`, `invisible-log` are reachable from the frontend). A background SSE bridge subscribes to `${INVISIBLE_SERVER_URL or http://127.0.0.1:8765}/api/stream` and forwards events onto Tauri's `dashboard:event` bus; when the local `invisible-dashboard` returns 404 (it does), the bridge transparently falls back to polling `/api/projects` every 5 s with exponential backoff (1 s → 2 s → 5 s → 10 s capped). Bridge code lives in `src-tauri/src/sse.rs`; the thin ESM frontend wrapper is `frontend-vite/src/lib/tauri.js`. **Status: preview.** `bin/invisible-app` (pywebview + pystray) remains the default desktop wrapper and is still operational. Phase 3 will produce the signed Windows `.msi`, code-sign the macOS `.app`, wire the auto-updater, and switch the default away from pywebview.
+
+---
+
+## Installation (macOS)
+
+The Tauri shell ships **unsigned** for now (no Apple Developer ID — issue
+tracked in the workstream ROADMAP). macOS Gatekeeper will refuse to open
+the app on first launch with a "cannot be opened because the developer
+cannot be verified" dialog. Pick one of the two unblock paths below.
+
+**Path A — right-click open (recommended for non-technical users):**
+
+1. Drag `Invisible.app` from the `.dmg` into `/Applications`.
+2. In Finder, **right-click** `Invisible.app` -> **Open**.
+3. In the dialog that appears, click **Open** again.
+4. macOS remembers the decision — subsequent launches work normally.
+
+**Path B — terminal (faster if you already have Terminal open):**
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Invisible.app
+```
+
+This strips the quarantine extended attribute that Gatekeeper added when
+the download landed. **Only run this on apps you downloaded yourself**
+from a source you trust — never apply it as a blanket "fix all the
+warnings" command.
+
+See [Apple's Gatekeeper docs](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)
+for the official walkthrough.
+
 ---
 
 ## Architecture
@@ -122,6 +158,101 @@ source ~/.zshrc
 ```bash
 invisible-doctor   # checks Python deps, Infisical reachability, git, tmux
 ```
+
+### VPS connection setup
+
+The Folders page, Terminals ssh panes, and `invisible-vps-handoff` all reach
+the VPS through a single SSH alias `srv982719`. ControlMaster multiplexing
+means the 6 panes share one TCP/TLS connection — once the master is up, every
+additional `ssh srv982719` reuses it in under 200ms.
+
+**1. Generate a key (skip if you already have `~/.ssh/id_ed25519`):**
+
+```bash
+test -f ~/.ssh/id_ed25519 || ssh-keygen -t ed25519 -C "$(whoami)@$(hostname) — invisible vps" -f ~/.ssh/id_ed25519 -N ""
+```
+
+The `-N ""` empty-passphrase choice is required for ControlMaster reuse from
+non-interactive subprocesses like `lib/api/tree_vps.py`. If you want a
+passphrase-protected key, load it via `ssh-agent` once per login session
+instead — see `man ssh-agent`.
+
+**2. Add the `Host srv982719` block to `~/.ssh/config`:**
+
+Paste the following manually into `~/.ssh/config` (create it if missing with
+`mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/config && chmod 600 ~/.ssh/config`):
+
+```
+Host srv982719
+  HostName 31.97.222.218
+  User avi
+  IdentityFile ~/.ssh/id_ed25519
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%r@%h:%p
+  ControlPersist 10m
+```
+
+- `HostName` is the VPS IP; if it changes, only this line moves.
+- `IdentityFile` — adjust if your key is at a different path.
+- `ControlPath ~/.ssh/cm-...` — make sure `~/.ssh/` exists and is mode 700
+  (`mkdir -p ~/.ssh && chmod 700 ~/.ssh` if it doesn't). Do NOT pre-create the
+  `cm-*` socket itself — OpenSSH does that on first connection.
+- `ControlPersist 10m` — keeps the master open 10 minutes after last use.
+  10m is generous enough that 6 panes won't churn the connection; tighten if
+  you ssh from untrusted networks.
+
+(You probably already have a `Host vps` block pointing at the same IP — leave
+it alone. The new `srv982719` block is in addition to it.)
+
+**3. Copy your public key to the VPS (one-time bootstrap):**
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub srv982719
+```
+
+This is the only step that REQUIRES you to type your VPS password — once it
+finishes, ControlMaster + key auth handle everything else.
+
+If `ssh-copy-id` is missing (rare on macOS, common on stripped-down servers):
+
+```bash
+cat ~/.ssh/id_ed25519.pub | ssh avi@31.97.222.218 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+```
+
+**4. Verify:**
+
+```bash
+ssh srv982719 echo ok            # should print 'ok' with no password prompt
+time ssh srv982719 echo ok       # second invocation: real time under 200ms (ControlMaster reuse)
+invisible-doctor                 # [ssh] section: PASS  ssh: srv982719   non-interactive auth works · master=cached
+grep '^host =' ~/.invisible/invisible.toml   # after copying .example → invisible.toml and editing: host = "srv982719"
+```
+
+**What success looks like (Phase 1 success criteria):**
+
+1. `~/.ssh/config` has a `Host srv982719` block with `ControlMaster auto`,
+   `ControlPath ~/.ssh/cm-%r@%h:%p`, `ControlPersist 10m`.
+2. `invisible.toml` `vps.host = "srv982719"` and
+   `vps.identity = "~/.ssh/id_ed25519"` (or similar).
+3. From a fresh shell, `ssh srv982719 echo ok` succeeds without password
+   prompt (key-based auth).
+4. A second `ssh srv982719 echo ok` runs in under 200ms (reuses the master
+   connection).
+
+**Out of repo, by design.** Both `~/.ssh/config` and `~/.invisible/invisible.toml`
+(and `~/.invisible/.env`) live OUTSIDE the repo. The repo only ships
+`invisible.toml.example` (no secrets), the Setup docs (this section), and the
+`bin/invisible-doctor` self-check. Your actual SSH config, real `host` value,
+and key material never reach git.
+
+**Two ControlMaster layers (intentional).** The user-shell layer above uses
+`ControlPath ~/.ssh/cm-%r@%h:%p` + `ControlPersist 10m` — that socket is for
+your interactive `ssh srv982719` from any terminal. Separately,
+`lib/api/tree_vps.py` (the dashboard daemon's VPS tree walker) uses
+`ControlPath=$INVISIBLE_HOME/run/ssh-cm-%r@%h:%p` + `ControlPersist=60s` for
+its subprocess walks. These are DIFFERENT sockets on purpose: if they shared
+one, closing your shell would tear down a socket the dashboard is still
+holding open. Do NOT "simplify" by collapsing them — both layers must coexist.
 
 ---
 
