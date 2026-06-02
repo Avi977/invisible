@@ -1,7 +1,64 @@
 # invisible main config.
 
 [vps]
-# Filled in once you decide to deploy invisible-server to srv982719.
+# ── VPS connection (M2 — vps-connection workstream) ──────────────────────
+# See "VPS connection setup" in README.md for the full setup walkthrough
+# (key generation, ~/.ssh/config block, ssh-copy-id bootstrap, verification).
+#
+# Phase 1 success criteria this block configures toward (from
+# .planning/workstreams/vps-connection/ROADMAP.md):
+#   1. ~/.ssh/config has a `Host srv982719` block with `ControlMaster auto`,
+#      `ControlPath ~/.ssh/cm-%r@%h:%p`, `ControlPersist 10m`.
+#   2. invisible.toml `vps.host = "srv982719"` and
+#      `vps.identity = "~/.ssh/id_ed25519"` (or similar).
+#   3. From a fresh shell, `ssh srv982719 echo ok` succeeds without
+#      password prompt (key-based auth).
+#   4. A second `ssh srv982719 echo ok` runs in under 200ms
+#      (reuses the master connection).
+#
+# Field semantics:
+#
+#   host — STRING. The SSH alias name (matches a `Host <name>` block in
+#     your ~/.ssh/config). Default `""` triggers the 503 graceful-degradation
+#     path in `lib/api/tree_vps.py walk_all` — the dashboard's
+#     `GET /api/v1/tree/vps` returns 503 with body
+#     `{"error":"vps.host not configured"}` which the Folders page renders
+#     as a "VPS not configured" placeholder. Worked example value:
+#         host = "srv982719"
+#     (Left as `""` in this committable example so the .example file
+#     stays a no-secrets template; copy it to ~/.invisible/invisible.toml
+#     and fill in the real value there.)
+#
+#   identity — STRING. Path to the private key, tilde-expansion supported.
+#     `~/.ssh/config` `IdentityFile` will override this for the in-shell
+#     case, but the `lib/api/tree_vps.py _ssh_argv` subprocess uses this
+#     value explicitly via `-i` so the dashboard daemon can authenticate
+#     even when the user's interactive ssh-agent is not loaded.
+#
+#   use_mosh — BOOL. Default `false`. Mosh is a Phase 3 concern (terminals
+#     page may opt-in to a mosh-backed pane) — nothing in Phase 1 reads
+#     this field yet.
+#
+# Example ~/.ssh/config block (NOT this file — your own ~/.ssh/config):
+#
+#   Host srv982719
+#     HostName 31.97.222.218
+#     User avi
+#     IdentityFile ~/.ssh/id_ed25519
+#     ControlMaster auto
+#     ControlPath ~/.ssh/cm-%r@%h:%p
+#     ControlPersist 10m
+#
+# Decision A — Two ControlMaster layers, intentionally NOT consolidated:
+#   - User-shell layer: ~/.ssh/config (above) uses `ControlPath
+#     ~/.ssh/cm-%r@%h:%p` and `ControlPersist 10m` for your interactive
+#     `ssh srv982719` from any shell (including app-spawned terminal panes).
+#   - Dashboard-daemon layer: `lib/api/tree_vps.py::_ssh_argv` uses a
+#     dedicated socket under `$INVISIBLE_HOME/run/ssh-cm-*` with
+#     `ControlPersist=60s`. The daemon's master MUST NOT share a socket
+#     with the user's interactive ssh — closing the user's shell would
+#     tear down a socket the dashboard is still using.
+# DO NOT "simplify" these by collapsing them to one socket path.
 host = ""
 identity = "~/.ssh/id_ed25519"
 use_mosh = false
