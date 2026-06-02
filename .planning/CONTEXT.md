@@ -27,6 +27,24 @@ Repo: `https://github.com/Avi977/invisible` (public). Working dir: `~/.invisible
 
 Plus open PR **#3**: `chore: add claude-code-security-review as required PR check` (not blocking).
 
+## M2 ship status — open PRs (started 2026-06-02)
+
+M2 wires the three deferred pages (Tools, Relations, Calendar) plus Tauri Phase 3 / VPS host wiring / CI scaffolding. Six parallel workstreams in `~/.invisible-ws/<name>/` — same pattern as M1.
+
+| Workstream | PR | Merged | What it brings |
+|---|---|---|---|
+| `calendar-events` | [#9](https://github.com/Avi977/invisible/pull/9) | ⏳ open | `lib/api/calendar.py` (777 lines, stdlib-only) — Notion + iCal + `~/.invisible/events.json` sources, `(title.lower(), start)` dedupe with notion priority, 60s single-flight cache (`threading.Lock`), SSRF/path-traversal/info-disclosure mitigations (ASVS L1). Frontend `calendar.jsx` rewrite — real-data fetch, RFC3339→decimal-hours transform, MiniCal `eventDaysSet` (replacing the `c.d % 3` mock), loading/empty/error states, ESC-dismiss popover, preserved `.week-now` line. Plus a CORS dedupe bugfix in `bin/invisible-dashboard::_send_json` (latent Wave 1 bug surfaced by Wave 2 smoke; benefits all `/api/v1/*` sister routes). gsd-verifier: PASS (8/8 success criteria, 14/14 STRIDE entries mitigated, workstream isolation clean — 9 files changed, all in OWNS / EDITS LIGHTLY / additive scope). |
+| `tools-page` | — | ⌛ in flight | n8n-style canvas page |
+| `relations-page` | — | ⌛ in flight | Obsidian-style graph page |
+| `tauri-windows` | — | ⌛ in flight | Windows `.msi` cross-compile (Tauri Phase 3) |
+| `vps-connection` | — | ⌛ in flight | `srv982719` host wiring + systemd `invisible-server` |
+| `ci-and-onboarding` | — | ⌛ in flight | Onboarding doc + CI scaffold |
+
+**M2 setup notes** (from `calendar-events` Phase 1 retro):
+- Sibling workstream ROADMAPs need `### Phase N:` detail headers (else `gsd-sdk query roadmap.get-phase` returns `malformed_roadmap`). Calendar-events fixed this at planning time; other workstreams may need the same edit before their first `/gsd:plan-phase` succeeds.
+- `ci-and-onboarding` was missing STATE.md (auto-created by `state.begin-phase` query if absent; otherwise a minimal one keyed `status: ready_to_execute` works).
+- Config has `research: false` and `auto_advance: true` — both apply at workstream level. The plan-phase UI gate also blocks unless `--skip-ui` is passed or UI-SPEC.md exists. For wiring-only phases (M1/M2 pattern), skipping is the right call — sibling shipped workstreams confirm.
+
 ## Gap 1 — Tauri Phase 2 (`src-tauri/`) stranded on `ws/tauri-shell`
 
 PR #4's merge commit (`bc23655`) was created at `a6e4007`, the **planning commit** for Phase 2 — _before_ the implementation commits landed. The 10 commits that built the actual Tauri shell are still on `origin/ws/tauri-shell` and never reached main.
@@ -164,7 +182,7 @@ The two gaps above are the obvious resume points. After that:
 
 1. **Tauri Phase 3** — Windows `.msi` cross-compile. Plan lives at `.planning/workstreams/tauri-shell/ROADMAP.md` (Phase 3 not yet planned). Needs `cargo xwin` or a Windows VM.
 2. **VPS host wiring** — `invisible.toml` still has `vps.host = ""`. Add `srv982719`, point `invisible-vps-handoff` at it, set up the systemd service for `invisible-server`. Folders/VPS column on the live frontend currently returns 503 with `vps.host not configured`.
-3. **M2 — deferred pages** — Tools (n8n canvas), Relations (Obsidian graph), Calendar. Each will follow the same workstream pattern.
+3. **M2 — deferred pages** — Tools (n8n canvas), Relations (Obsidian graph), Calendar (✓ PR [#9](https://github.com/Avi977/invisible/pull/9) open as of 2026-06-02 — awaiting merge). Each follows the same workstream pattern; see "M2 ship status" table above for live state.
 4. **Operational baseline** — Phase 1 of the user-facing ROADMAP.md ("First operational run against jobslayer") was attempted earlier; the orchestrator ran but the sandbox + auth bugs surfaced. Both fixed, but the run never produced a real commit to jobslayer. Worth re-running.
 
 ## Quick orientation for a fresh Claude session
