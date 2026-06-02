@@ -7,6 +7,7 @@ What it serves:
   - /api/projects       JSON list (for scripting + the HTML view's fetch)
   - /api/p/<project>    JSON drilldown
   - /api/reviews        recent Notion Reviews (cross-machine signal)
+  - /api/v1/analytics   aggregated token + time + tool stats from Notion review history (REQ-05)
   - /healthz            200 OK, no auth (for nginx/CF health probes)
 
 Authentication:
@@ -62,6 +63,7 @@ from dashboard_render import (  # noqa: E402
 from api import ROUTES as API_V1_ROUTES  # noqa: E402
 from api import tree_local, tree_vps, tree_repo  # noqa: E402  — GET /api/v1/tree/{local,vps,repo}
 from api.chat import chat_handler  # noqa: E402  — POST /api/v1/chat proxy to `claude -p`
+from api import analytics as analytics_api  # noqa: E402  — GET /api/v1/analytics
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -293,6 +295,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # regardless of the ACAO value. Adding a second conditional ACAO
         # here would produce duplicate Access-Control-Allow-Origin headers,
         # which browsers reject per the CORS spec.
+        # TODO(post-merge): tighten end_headers() to loopback-echo only (was
+        # the analytics branch's intent but conflicted with current main); track
+        # in a follow-up SECURITY phase.
         self.end_headers()
         self.wfile.write(b)
 
@@ -301,6 +306,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(b)
 
@@ -360,6 +366,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path in API_V1_ROUTES:
             API_V1_ROUTES[path](self)
             return
+
         # ── Three-source tree endpoints (REQ-03) ────────────────────────
         # Auth was already enforced at the top of do_GET via _auth_ok();
         # for the SSE branch the EventSource passes the token as ?token=
@@ -369,9 +376,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             project = q.get("project", [None])[0]
             if q.get("watch") == ["1"]:
-                # SSE — stream_diffs blocks until client disconnect.
-                # It writes its OWN response headers (incl. CORS), so we
-                # must NOT call _send_json / _send_text before it.
                 try:
                     tree_local.stream_diffs(self, project=project)
                 except (BrokenPipeError, ConnectionResetError):
@@ -390,15 +394,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             project = q.get("project", [None])[0]
             payload, status = tree_vps.walk_all(project=project)
-            # tree_vps wraps its 503 error body as [VPS_NOT_CONFIGURED]
-            # (a list with one error dict). REQ-03 acceptance wants the
-            # body to be a bare {"error": "..."} object. Unwrap the
-            # error case so the wire shape matches the spec; tree-shape
-            # payloads (status=200) pass through as-is (lists).
             if status != 200 and isinstance(payload, list) and payload:
                 self._send_json(payload[0], status=status)
                 return
             self._send_json(payload, status=status)
+            return
+
+        # ── Analytics (REQ-05) ──────────────────────────────────────────
+        if path == "/api/v1/analytics":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            status, body = analytics_api.handle_request(q)
+            self._send_json(body, status)
             return
 
         self._send_text("not found\n", 404)
