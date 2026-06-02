@@ -8,10 +8,13 @@
 
 - [ ] **Phase 1: `/api/v1/calendar` + Calendar page wired**
 
-## Phase 1 Details
+## Phase Details
 
-**Goal:** Calendar page shows real events on its month + week views,
+### Phase 1: `/api/v1/calendar` + Calendar page wired
+**Goal**: Calendar page shows real events on its month + week views,
 replacing the mock events in `frontend/data.jsx`.
+
+**Depends on**: Nothing. Pure parallel — new module + new route. `lib/notion.py` changes are additive only (new `query_calendar_db` helper). Same conflict surface as tools-page / relations-page (one-line each in `lib/api/__init__.py` and `bin/invisible-dashboard`).
 
 **Event sources** (priority order):
 
@@ -27,18 +30,17 @@ replacing the mock events in `frontend/data.jsx`.
 If no source is configured, return `[]` (NOT an error). The frontend
 shows "no events configured" gracefully.
 
-**Success criteria:**
-1. `GET /api/v1/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` returns
-   `[{id, title, start, end, color, project_id?, source}]`.
-2. Each event's `start` and `end` are RFC3339 timestamps.
-3. The frontend renders them on the month grid and week strip.
-4. Project colours match `data.jsx`'s `DATA_SETS[..].projects[i].color`
-   when `project_id` matches.
-5. If multiple sources, events from all are merged (dedupe by
-   `(title, start)` if needed).
-6. 60s cache server-side.
+**Success Criteria** (what must be TRUE):
+  1. `GET /api/v1/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` returns `[{id, title, start, end, color, project_id?, source}]`.
+  2. Each event's `start` and `end` are RFC3339 timestamps.
+  3. The frontend renders them on the month grid and week strip.
+  4. Project colours match `data.jsx`'s `DATA_SETS[..].projects[i].color` when `project_id` matches.
+  5. If multiple sources, events from all are merged (dedupe by `(title, start)` if needed).
+  6. 60s cache server-side.
+  7. No source configured → endpoint returns `[]` (HTTP 200), not an error; UI shows "no events configured" gracefully.
+  8. iCal parsing uses stdlib only — no new dependency in `requirements.txt`.
 
-**Plans:** 2 plans
+**Plans**: 2 plans
 - [ ] 01-01: Backend — `lib/api/calendar.py` with the 3 sources, dedupe, cache
 - [ ] 01-02: Frontend — `frontend/pages/calendar.jsx` swap; preserve visual + interactions (live "now" line, click-to-expand)
 
