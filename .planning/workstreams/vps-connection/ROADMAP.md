@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: SSH ControlMaster + invisible.toml host** — `srv982719` wired, connection multiplexed
+- [x] **Phase 1: SSH ControlMaster + invisible.toml host** — `srv982719` wired, connection multiplexed (both plans complete, tree_vps verified end-to-end)
 - [ ] **Phase 2: `invisible-server` as systemd service + nginx vhost** — dashboard daemon available remotely under HTTPS
 - [ ] **Phase 3: Folders/VPS column populated + Terminals ssh variant** — end-to-end VPS reach inside the app
 
@@ -30,13 +30,14 @@
 
 **Plans:** 2 plans
 - [x] 01-01: SSH config + invisible.toml wiring; document the ed25519 key generation in README — **COMPLETE** (see `phases/INV-01-ssh-controlmaster-invisible-toml-host/01-01-SUMMARY.md`)
-- [ ] 01-02: `lib/api/tree_vps.py` rewritten to actually hit `srv982719` (currently returns 503 because `vps.host=""`)
+- [x] 01-02: `lib/api/tree_vps.py` verified end-to-end against `srv982719`; surfaced + fixed remote-shell glob-expansion bug via `shlex.quote` at `_ssh_argv` boundary — **COMPLETE** (see `phases/INV-01-ssh-controlmaster-invisible-toml-host/01-02-SUMMARY.md`)
 
-**Phase 1 criterion status (as of plan 01-01 close):**
+**Phase 1 criterion status (as of plan 01-02 close):**
 1. ✅ `~/.ssh/config` `Host srv982719` block with ControlMaster directives — DONE
 2. ✅ `invisible.toml` `vps.host = "srv982719"` and `vps.identity = "..."` — DONE
 3. ✅ `ssh srv982719 echo ok` succeeds passwordless — DONE
 4. ⚠️ Warm `ssh srv982719 echo ok` under 200ms — **RTT-bound, not achievable** on this network (ping RTT 199-280ms). ControlMaster gives 6× speedup (cold 2.486s → warm 0.401-0.456s). Recommend rewording criterion: "warm at least 4× faster than cold" — that IS satisfied. See `01-01-SUMMARY.md` "Criterion 4" for full analysis.
+5. ✅ **`lib/api/tree_vps.walk_all` actually walks the live VPS** — verified against `/srv/bg-remover` end-to-end (8-child tree returned, no `unreachable` badge). Bug found and fixed (`shlex.quote` on remote_cmd in `_ssh_argv`). See `01-02-SUMMARY.md`.
 
 ### Phase 2: invisible-server systemd unit + nginx vhost
 
