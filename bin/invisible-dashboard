@@ -363,6 +363,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # extend ROUTES by adding one import + one dict entry each.
         if path in API_V1_ROUTES:
             API_V1_ROUTES[path](self)
+            return
         # ── Three-source tree endpoints (REQ-03) ────────────────────────
         # Auth was already enforced at the top of do_GET via _auth_ok();
         # for the SSE branch the EventSource passes the token as ?token=
