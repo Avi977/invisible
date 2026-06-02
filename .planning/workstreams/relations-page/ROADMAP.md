@@ -44,7 +44,7 @@ filters by type, so emit all and let the frontend choose):
 6. Cache the derivation per-project for 60s.
 
 **Plans:** 2 plans
-- [ ] 01-01: Backend — `lib/api/relations.py` with the 3 derivers + a unified `build_graph(project)`; 60s cache
+- [x] 01-01: Backend — `lib/api/relations.py` with the 3 derivers + a unified `build_graph(project)`; 60s cache **(SHIPPED 2026-06-02 — see 01-01-SUMMARY.md)**
 - [ ] 01-02: Frontend — `frontend/pages/relations.jsx` swap; preserve existing visual + interactions (drag, hover-focus, filter chips)
 
 ## Files this workstream OWNS
