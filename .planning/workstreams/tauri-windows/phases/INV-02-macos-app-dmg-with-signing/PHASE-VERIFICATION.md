@@ -58,7 +58,7 @@ sections below.
 | 1 | Developer ID Application certificate documented | DEFERRED — ship unsigned, README workaround documents the user-facing impact | DEFERRED-AS-LOCKED | `02-CONTEXT.md` "Apple Developer Program / Signing" LOCKED block; README `## Installation (macOS)` section (commit `38feb03` from Task 02-01-02) |
 | 2 | `cargo tauri build` (no target) produces `.app` and `.dmg` | (no change) | PASS | This task. `.app` and `.dmg` SHA256s + sizes recorded above in YAML frontmatter. |
 | 3 | `codesign --verify --verbose` returns 0; `spctl -a -t exec` reports accepted | DEFERRED — verify unsigned status instead | PASS-AS-REINTERPRETED | `codesign-status` field above proves no Dev ID Application authority is attached. |
-| 4 | Auto-updater public key + endpoint placeholders ready | (no change — handled in Plan 02-02) | PENDING — PLAN 02-02 | Plan 02-02 appends an "Updater keypair" section to this file. |
+| 4 | Auto-updater public key + endpoint placeholders ready | (no change) | PASS | See "## Updater keypair" section below; pubkey inlined in tauri.conf.json commit 42ed4cb, private key target Infisical project=invisible-tauri, env=prod, key=TAURI_UPDATER_PRIVATE_KEY (upload deferred — see INFISICAL-MANUAL-ACTION.md). |
 
 ## Native-build proof (anti-regression vs Phase 1)
 
@@ -183,3 +183,147 @@ document:
 - The Infisical path of the private key (NOT the key value itself).
 - A re-run of `cargo tauri build` proving the new config did not break
   the native macOS build path verified in this plan.
+
+## Updater keypair (Plan 02-02 — appended)
+
+### Public key (safe to commit — and is committed)
+
+File: `~/.tauri/invisible.key.pub`
+
+Base64 value (the entire single-line base64 blob — Tauri 2.x writes the
+whole minisign file content as one base64 blob; this whole blob is what
+the updater's `pubkey` field expects):
+
+```
+dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxNDE4NDQ0NkQyMkQwMDkKUldRSjBDSnRSSVJCNGVvd01CeVk4S3N1dmNaMUwzY0pQems5NzJyZHptZ0tUZC8wT25TY0o1ZE0K
+```
+
+Decoded for human verification:
+
+```
+untrusted comment: minisign public key: E14184446D22D009
+RWQJ0CJtRIRB4eowMByY8KsuvcZ1L3cJPzk972rdzmgKTd/0OnScJ5dM
+```
+
+Inlined into `src-tauri/tauri.conf.json` at `plugins.updater.pubkey` in
+commit `42ed4cb`. Endpoint placeholder set to
+`https://github.com/Avi977/invisible/releases/latest/download/latest.json`
+per 02-CONTEXT.md LOCKED decision.
+
+Note on length: the plan's expected pubkey-length bound (40–120 chars)
+matched the inner-line-only format; Tauri 2.11.2's `cargo tauri signer
+generate` actually emits the entire minisign file as a single 152-char
+base64 blob and the updater config expects that whole blob. The
+verification doc records the actual format, not the plan's predicted
+length. The Rust JSON validator in Task 02-02-02 was adjusted to accept
+up to 200 chars (Rule 3 deviation, documented in 02-02-SUMMARY.md).
+
+### Private key (NEVER committed — recorded by storage location only)
+
+- **Location target:** Infisical at `vault.theprofitplatform.com.au`
+- **Project:** `invisible-tauri` (new project per 02-CONTEXT.md LOCKED naming; the existing `invisible` project was not linked from this worktree at autonomous-run time)
+- **Environment:** `prod`
+- **Secret key:** `TAURI_UPDATER_PRIVATE_KEY`
+- **Password:** No password set (`cargo tauri signer generate --ci --password ""`).
+  Therefore no `TAURI_UPDATER_KEY_PASSWORD` secret was created.
+- **Local file:** `~/.tauri/invisible.key` (mode 0600 — OUTSIDE the worktree, never committed).
+- **Upload status:** DEFERRED — Infisical login + project link require
+  interactive OAuth and an interactive `infisical init` picker that the
+  autonomous overnight run could not drive. See
+  `INFISICAL-MANUAL-ACTION.md` in this directory for the one-step user
+  ceremony that uploads the key. Phase 3 (`release.yml`) MUST complete
+  this before the first tag-triggered release.
+
+Phase 3 retrieval pattern (for `release.yml` documentation):
+
+```bash
+# Inside CI, after `infisical login` via service token (NOT the OAuth flow):
+infisical run --env=prod --path=/ -- env | grep TAURI_UPDATER_PRIVATE_KEY
+
+# Or for direct env-var population for `cargo tauri build`:
+export TAURI_SIGNING_PRIVATE_KEY="$(infisical secrets get TAURI_UPDATER_PRIVATE_KEY --env=prod --plain --silent)"
+cargo tauri build
+```
+
+Phase 3 release.yml is responsible for mapping the Infisical key name
+(`TAURI_UPDATER_PRIVATE_KEY`) to the env var name Tauri 2.x expects
+(`TAURI_SIGNING_PRIVATE_KEY`).
+
+### Anti-regression: native build still works with `plugins.updater` set
+
+After adding the `plugins.updater` block to `tauri.conf.json`, the native
+`CI=true cargo tauri build` was re-run and still produced both artefacts:
+
+```
+$ shasum -a 256 src-tauri/target/release/bundle/macos/Invisible.app/Contents/MacOS/invisible-tauri
+e65e58b6b5b4becd7e88e34f3c63496a3bbf9535312571591e149130655af16f  src-tauri/target/release/bundle/macos/Invisible.app/Contents/MacOS/invisible-tauri
+
+$ shasum -a 256 src-tauri/target/release/bundle/dmg/Invisible_0.1.0_*.dmg
+a2562d7a82d1a66db061f6757d38e2a36ff60d5a5735e3c02e72a651b80b88bd  src-tauri/target/release/bundle/dmg/Invisible_0.1.0_aarch64.dmg
+
+$ file src-tauri/target/release/bundle/macos/Invisible.app/Contents/MacOS/invisible-tauri
+src-tauri/target/release/bundle/macos/Invisible.app/Contents/MacOS/invisible-tauri: Mach-O 64-bit executable arm64
+```
+
+The rebuild SHA256s differ from Plan 02-01's initial-build SHA256s
+(`b080ee8c...` for binary, `4a1f4069...` for dmg) because Tauri embeds
+build-time metadata into the binary on every rebuild. The structural
+assertions that matter still hold: the rebuilt binary is `Mach-O ...
+executable arm64` and `codesign -dv` reports `Signature=adhoc` with
+`TeamIdentifier=not set` and no `Authority=Developer ID Application:`
+line. Without `bundle.createUpdaterArtifacts: true`, the bundler treats
+`plugins.updater` as runtime-only config and did NOT require
+`TAURI_SIGNING_PRIVATE_KEY` at build time — exactly the behaviour the
+plan predicted for T-INV-02-02-CONFIG-BREAK mitigation.
+
+### Security posture (threats from phase prompt + plan threat-model)
+
+- **T1 — private key exfiltration:** mitigated. Private key lives at
+  `~/.tauri/invisible.key` (mode 0600, outside worktree). Target storage
+  in Infisical at `TAURI_UPDATER_PRIVATE_KEY` (upload deferred — see
+  `INFISICAL-MANUAL-ACTION.md`). `git ls-files | grep -q invisible.key`
+  returns empty. The key value was never echoed to shell history (push
+  was attempted with `KEY=$(cat ~/.tauri/invisible.key)` via Infisical
+  CLI; the autonomous attempt failed cleanly because of the missing
+  project link, before the value reached any log). The key value was
+  never pasted into this verification doc.
+- **T2 — public key tampering:** mitigated. Pubkey is in version control
+  (`src-tauri/tauri.conf.json`). Any future PR modifying
+  `plugins.updater.pubkey` requires equal scrutiny to a Dev ID change.
+- **T3 — endpoint URL pinning:** mitigated. Endpoint is pinned to the
+  official `github.com/Avi977/invisible/releases/...` host. Any PR
+  changing the endpoint URL requires equal scrutiny to a pubkey change.
+- **T4 — quarantine bypass scope:** mitigated by Plan 02-01 (README
+  `xattr` command is scoped to `/Applications/Invisible.app`, not a
+  wildcard). No new T4 exposure in this plan.
+
+### Hand-off to Phase 3
+
+Phase 3 (`release.yml`) needs:
+1. Service-token auth to Infisical (NOT OAuth) — set up a machine identity
+   with read-only access to the secret `TAURI_UPDATER_PRIVATE_KEY` in
+   project `invisible-tauri` env `prod`.
+2. `cargo install tauri-cli@2.11.2 --locked` in the runner.
+3. `cargo add tauri-plugin-updater` in `src-tauri/Cargo.toml` (the Rust
+   side this phase deliberately deferred).
+4. Register the plugin in `src-tauri/src/lib.rs`:
+   ```rust
+   #[cfg(desktop)]
+   app.handle().plugin(tauri_plugin_updater::Builder::new().build());
+   ```
+5. Set `bundle.createUpdaterArtifacts: true` in `tauri.conf.json` so the
+   bundler emits `.sig` files alongside the `.app`/`.dmg`/`.exe`.
+6. Export `TAURI_SIGNING_PRIVATE_KEY="$(infisical secrets get ...)"` before
+   `cargo tauri build` in the macOS and Windows jobs.
+7. Publish the signed manifest as `latest.json` at the GitHub Release URL
+   already pinned in `plugins.updater.endpoints`.
+
+### Pre-Phase-3 unblock (user action required)
+
+Before Phase 3 starts, the user must complete the one-step Infisical
+ceremony documented in
+`.planning/workstreams/tauri-windows/phases/INV-02-macos-app-dmg-with-signing/INFISICAL-MANUAL-ACTION.md`.
+The local keypair at `~/.tauri/invisible.key` is the canonical source —
+the ceremony only uploads its content into Infisical so Phase 3 CI can
+read it. Until that ceremony completes, Phase 3 cannot sign update
+manifests.
