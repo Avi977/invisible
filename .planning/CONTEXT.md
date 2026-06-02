@@ -14,6 +14,8 @@ six parallel workstreams.
 
 Repo: `https://github.com/Avi977/invisible` (public). Working dir: `~/.invisible`.
 
+**Design constraint — no API keys.** `invisible` is a *wrapper around Claude Code (the `claude` CLI)*, authed via the claude.ai **Max-plan subscription** (and `codex` via ChatGPT login) — it does **not** use Anthropic API keys. The orchestrator and `lib/api/chat.py` shell out to `claude -p`. Do **not** add tooling that requires an `ANTHROPIC_API_KEY` / `CLAUDE_API_KEY` (CI actions, SDKs, etc.). Anything that needs Claude's judgment (e.g. security review) runs **locally via the `claude` CLI**, never a keyed service.
+
 ## M1 ship status — what's in `main` today (2026-06-01)
 
 | Workstream | PR | Merged | What it brought |
@@ -25,7 +27,7 @@ Repo: `https://github.com/Avi977/invisible` (public). Working dir: `~/.invisible
 | `dashboard-wiring`   | #6 | ✅ | `lib/api/projects.py`, `/api/v1/projects` adapter; wired `frontend/pages/dashboard.jsx` |
 | `analytics-aggregator` | — | ❌ **not shipped** | Workstream completed locally but no PR opened — see "Gap 2" below. |
 
-Plus open PR **#3**: `chore: add claude-code-security-review as required PR check` (not blocking).
+PR **#3** (`claude-code-security-review`) was **merged then reverted off `main`** (revert `23de0da`, 2026-06-02): the action only accepts an Anthropic API key, which violates the no-API-keys constraint above. Semantic security review is done **locally via the `claude` CLI**; the keyless `ci.yml` (lint/test/import-smoke, from M2 `ci-and-onboarding`) is unaffected.
 
 ## Gap 1 — Tauri Phase 2 (`src-tauri/`) stranded on `ws/tauri-shell`
 

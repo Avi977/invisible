@@ -43,6 +43,7 @@
 
 ### Security-review track (PR #3)
 - **D-06:** MERGE PR #3 as-is (ratified by the user). `ci.yml` is a **separate file** from PR #3's `security-review.yml` — they coexist with zero conflict (different filenames, different job names). Plan 01-02 performs `gh pr merge 3` **behind an explicit confirm step** (it mutates `main` of a public repo), then documents the two post-merge manual steps from PR #3's `SECURITY-REVIEW.md`: (1) set the `CLAUDE_API_KEY` repo secret, (2) register the `Claude security review` branch-protection required check. Do NOT author a competing `security-review.yml`.
+  - **[REVERSED 2026-06-02]** PR #3 was merged (squash `692dc52`) then reverted off `main` (`23de0da`): `claude-code-security-review` only accepts an Anthropic API key, which conflicts with invisible's no-API-key (Claude Code CLI) design. The `CLAUDE_API_KEY` / required-check steps are VOID; semantic security review now runs locally via the `claude` CLI. `ci.yml` is keyless and unaffected.
 
 ### Branch protection
 - **D-07:** Making `ci.yml` a required check on `main` (ROADMAP success criterion 5) is recorded as a **documented manual step** — the automation/owner may lack branch-protection permissions. The plan records the exact `gh api .../branches/main/protection` invocation and the job/check names, but does not assume it can execute it.
