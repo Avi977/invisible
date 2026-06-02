@@ -27,23 +27,18 @@ Repo: `https://github.com/Avi977/invisible` (public). Working dir: `~/.invisible
 
 Plus open PR **#3**: `chore: add claude-code-security-review as required PR check` (not blocking).
 
-## M2 ship status — open PRs (started 2026-06-02)
+## M2 status — deferred pages (update 2026-06-02)
 
-M2 wires the three deferred pages (Tools, Relations, Calendar) plus Tauri Phase 3 / VPS host wiring / CI scaffolding. Six parallel workstreams in `~/.invisible-ws/<name>/` — same pattern as M1.
+M2 wires the three pages M1 deferred (Tools, Relations, Calendar) plus `tauri-windows`, `vps-connection`, `ci-and-onboarding` — again as parallel workstreams in `~/.invisible-ws/<ws>`.
 
-| Workstream | PR | Merged | What it brings |
+| Workstream | PR | State | What it brings |
 |---|---|---|---|
-| `calendar-events` | [#9](https://github.com/Avi977/invisible/pull/9) | ⏳ open | `lib/api/calendar.py` (777 lines, stdlib-only) — Notion + iCal + `~/.invisible/events.json` sources, `(title.lower(), start)` dedupe with notion priority, 60s single-flight cache (`threading.Lock`), SSRF/path-traversal/info-disclosure mitigations (ASVS L1). Frontend `calendar.jsx` rewrite — real-data fetch, RFC3339→decimal-hours transform, MiniCal `eventDaysSet` (replacing the `c.d % 3` mock), loading/empty/error states, ESC-dismiss popover, preserved `.week-now` line. Plus a CORS dedupe bugfix in `bin/invisible-dashboard::_send_json` (latent Wave 1 bug surfaced by Wave 2 smoke; benefits all `/api/v1/*` sister routes). gsd-verifier: PASS (8/8 success criteria, 14/14 STRIDE entries mitigated, workstream isolation clean — 9 files changed, all in OWNS / EDITS LIGHTLY / additive scope). |
-| `tools-page` | — | ⌛ in flight | n8n-style canvas page |
-| `relations-page` | — | ⌛ in flight | Obsidian-style graph page |
-| `tauri-windows` | — | ⌛ in flight | Windows `.msi` cross-compile (Tauri Phase 3) |
-| `vps-connection` | — | ⌛ in flight | `srv982719` host wiring + systemd `invisible-server` |
-| `ci-and-onboarding` | — | ⌛ in flight | Onboarding doc + CI scaffold |
+| `tools-page` | **#10** | 🔵 open (`ws/tools-page` → `main`) | `lib/api/tools.py` (GET/PUT/DELETE `/api/v1/tools`, atomic per-project JSON at `~/.invisible/workflows/<project>.json`), `do_PUT`/`do_DELETE` on the daemon, a **central CORS single-source fix**, and wired `frontend/pages/tools.jsx` (fetch + 1s-debounced autosave + status footer). Verified end-to-end in a real browser (16/16 decisions). |
+| others | — | in progress | tauri-windows, vps-connection, relations-page, calendar-events, ci-and-onboarding (sibling sessions) |
 
-**M2 setup notes** (from `calendar-events` Phase 1 retro):
-- Sibling workstream ROADMAPs need `### Phase N:` detail headers (else `gsd-sdk query roadmap.get-phase` returns `malformed_roadmap`). Calendar-events fixed this at planning time; other workstreams may need the same edit before their first `/gsd:plan-phase` succeeds.
-- `ci-and-onboarding` was missing STATE.md (auto-created by `state.begin-phase` query if absent; otherwise a minimal one keyed `status: ready_to_execute` works).
-- Config has `research: false` and `auto_advance: true` — both apply at workstream level. The plan-phase UI gate also blocks unless `--skip-ui` is passed or UI-SPEC.md exists. For wiring-only phases (M1/M2 pattern), skipping is the right call — sibling shipped workstreams confirm.
+**⚠ Shared-file note for sibling M2 sessions:** PR #10 single-sources the CORS headers in `bin/invisible-dashboard` — it removes the duplicate `Access-Control-Allow-Origin` (`end_headers()` `*` vs `_send_json` Origin echo) and collapses the two `do_OPTIONS` defs into one advertising `GET, POST, PUT, DELETE, OPTIONS`. That duplicate-ACAO was a latent bug silently breaking cross-origin fetches for the already-merged M1 pages. **Rebase onto `main` after #10 merges** — it touches the shared CORS surface every workstream's routes depend on.
+
+GSD setup gotchas for the other M2 workstreams (per-workstream ROADMAP `### Phase N:` headers, missing `STATE.md`, planner `depends_on` over-qualification collapsing waves, `:8765` + browser-MCP contention during real-browser verification) are captured in the `invisible_gsd_workstream_setup` memory.
 
 ## Gap 1 — Tauri Phase 2 (`src-tauri/`) stranded on `ws/tauri-shell`
 
@@ -182,7 +177,7 @@ The two gaps above are the obvious resume points. After that:
 
 1. **Tauri Phase 3** — Windows `.msi` cross-compile. Plan lives at `.planning/workstreams/tauri-shell/ROADMAP.md` (Phase 3 not yet planned). Needs `cargo xwin` or a Windows VM.
 2. **VPS host wiring** — `invisible.toml` still has `vps.host = ""`. Add `srv982719`, point `invisible-vps-handoff` at it, set up the systemd service for `invisible-server`. Folders/VPS column on the live frontend currently returns 503 with `vps.host not configured`.
-3. **M2 — deferred pages** — Tools (n8n canvas), Relations (Obsidian graph), Calendar (✓ PR [#9](https://github.com/Avi977/invisible/pull/9) open as of 2026-06-02 — awaiting merge). Each follows the same workstream pattern; see "M2 ship status" table above for live state.
+3. **M2 — deferred pages** — `tools-page` (n8n canvas) is **shipped in PR #10** (open; see "M2 status" above). Relations (Obsidian graph) and Calendar remain, plus tauri-windows / vps-connection / ci-and-onboarding — each following the same workstream pattern.
 4. **Operational baseline** — Phase 1 of the user-facing ROADMAP.md ("First operational run against jobslayer") was attempted earlier; the orchestrator ran but the sandbox + auth bugs surfaced. Both fixed, but the run never produced a real commit to jobslayer. Worth re-running.
 
 ## Quick orientation for a fresh Claude session

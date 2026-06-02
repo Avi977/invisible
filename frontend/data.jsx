@@ -167,90 +167,6 @@ const FOLDERS = {
   },
 };
 
-// Per-project tool workflows. Each project has its own n8n-style graph.
-const TOOL_WORKFLOWS = {
-  echo: {
-    name: "Echo · ingest pipeline",
-    nodes: [
-      { id: "e1", type: "github",   name: "Voice clip",     code: "MIC", c: "#f5b343", body: "iOS upload",      x: 100, y: 120 },
-      { id: "e2", type: "whisper",  name: "Whisper v3",     code: "AI",  c: "#f5b343", body: "transcribe",      x: 320, y: 120 },
-      { id: "e3", type: "claude",   name: "Claude Sonnet",  code: "AI",  c: "#f5b343", body: "extract themes",  x: 540, y: 120 },
-      { id: "e4", type: "embed",    name: "Voyage Embed",   code: "AI",  c: "#f5b343", body: "vectorize",       x: 540, y: 240 },
-      { id: "e5", type: "postgres", name: "Postgres",       code: "DB",  c: "#5cc8ff", body: "entries + vecs",  x: 760, y: 180 },
-      { id: "e6", type: "stripe",   name: "Stripe",         code: "$",   c: "#b794ff", body: "premium gate",    x: 320, y: 300 },
-    ],
-    edges: [
-      { from: "e1", to: "e2" }, { from: "e2", to: "e3" }, { from: "e2", to: "e4" },
-      { from: "e3", to: "e5" }, { from: "e4", to: "e5" }, { from: "e6", to: "e1" },
-    ],
-  },
-  lumen: {
-    name: "Lumen · dashboard gen",
-    nodes: [
-      { id: "l1", type: "postgres", name: "Postgres",       code: "DB",  c: "#5cc8ff", body: "user schema",    x: 100, y: 140 },
-      { id: "l2", type: "code",     name: "Schema walker",  code: "JS",  c: "#5ee0c8", body: "RLS-aware",      x: 320, y: 140 },
-      { id: "l3", type: "claude",   name: "Claude Haiku",   code: "AI",  c: "#f5b343", body: "suggest widgets",x: 540, y: 140 },
-      { id: "l4", type: "redis",    name: "Redis",          code: "DB",  c: "#5cc8ff", body: "cache layout",   x: 540, y: 260 },
-      { id: "l5", type: "github",   name: "GitHub Action",  code: "GH",  c: "#b794ff", body: "publish",        x: 760, y: 200 },
-    ],
-    edges: [
-      { from: "l1", to: "l2" }, { from: "l2", to: "l3" }, { from: "l3", to: "l4" }, { from: "l3", to: "l5" },
-    ],
-  },
-  drift: {
-    name: "Drift · launch funnel",
-    nodes: [
-      { id: "d1", type: "github",   name: "Waitlist form",  code: "WL",  c: "#b794ff", body: "POST /signup",    x: 100, y: 160 },
-      { id: "d2", type: "if",       name: "Validate",       code: "IF",  c: "#5ee0c8", body: "email ok",        x: 320, y: 160 },
-      { id: "d3", type: "postgres", name: "Postgres",       code: "DB",  c: "#5cc8ff", body: "waitlist",        x: 540, y: 100 },
-      { id: "d4", type: "resend",   name: "Resend",         code: "@",   c: "#b794ff", body: "welcome email",   x: 540, y: 240 },
-      { id: "d5", type: "slack",    name: "Slack",          code: "#",   c: "#b794ff", body: "#growth",         x: 760, y: 180 },
-    ],
-    edges: [
-      { from: "d1", to: "d2" }, { from: "d2", to: "d3" }, { from: "d2", to: "d4" },
-      { from: "d3", to: "d5" }, { from: "d4", to: "d5" },
-    ],
-  },
-  atlas: {
-    name: "Atlas · deploy GitOps",
-    nodes: [
-      { id: "a1", type: "github",   name: "Push to main",   code: "GH",  c: "#b794ff", body: "atlas repo",      x: 100, y: 160 },
-      { id: "a2", type: "code",     name: "Argo sync",      code: "CD",  c: "#5ee0c8", body: "k3s manifests",   x: 320, y: 160 },
-      { id: "a3", type: "if",       name: "Health check",   code: "IF",  c: "#5ee0c8", body: "rollout ok",      x: 540, y: 160 },
-      { id: "a4", type: "slack",    name: "Slack",          code: "#",   c: "#b794ff", body: "#deploys",        x: 760, y: 100 },
-      { id: "a5", type: "github",   name: "Rollback",       code: "↶",   c: "#b794ff", body: "auto-revert",     x: 760, y: 240 },
-    ],
-    edges: [
-      { from: "a1", to: "a2" }, { from: "a2", to: "a3" }, { from: "a3", to: "a4" }, { from: "a3", to: "a5" },
-    ],
-  },
-  rune: {
-    name: "Rune · pairing engine",
-    nodes: [
-      { id: "r1", type: "github",   name: "Font upload",    code: "TTF", c: "#b794ff", body: ".ttf / .otf",     x: 100, y: 160 },
-      { id: "r2", type: "code",     name: "Sample render",  code: "JS",  c: "#5ee0c8", body: "skia canvas",     x: 320, y: 160 },
-      { id: "r3", type: "claude",   name: "Claude Vision",  code: "AI",  c: "#f5b343", body: "rate pairings",   x: 540, y: 160 },
-      { id: "r4", type: "s3",       name: "S3",             code: "S3",  c: "#5cc8ff", body: "samples bucket",  x: 320, y: 280 },
-    ],
-    edges: [
-      { from: "r1", to: "r2" }, { from: "r2", to: "r3" }, { from: "r2", to: "r4" }, { from: "r4", to: "r3" },
-    ],
-  },
-  ferry: {
-    name: "Ferry · webhook router",
-    nodes: [
-      { id: "f1", type: "github",   name: "Inbound hook",   code: "IN",  c: "#b794ff", body: "any source",      x: 100, y: 160 },
-      { id: "f2", type: "switch",   name: "Route",          code: "SW",  c: "#5ee0c8", body: "by signature",    x: 320, y: 160 },
-      { id: "f3", type: "slack",    name: "Slack",          code: "#",   c: "#b794ff", body: "#alerts",         x: 540, y: 80  },
-      { id: "f4", type: "resend",   name: "Resend",         code: "@",   c: "#b794ff", body: "ops email",       x: 540, y: 180 },
-      { id: "f5", type: "redis",    name: "Redis",          code: "DB",  c: "#5cc8ff", body: "replay queue",    x: 540, y: 280 },
-    ],
-    edges: [
-      { from: "f1", to: "f2" }, { from: "f2", to: "f3" }, { from: "f2", to: "f4" }, { from: "f2", to: "f5" },
-    ],
-  },
-};
-
 // Per-terminal project context — surfaced via the collapsible header.
 const TERM_CONTEXT = {
   "echo · ios": {
@@ -362,6 +278,7 @@ const TERM_CONTEXT = {
 // GET /api/v1/analytics from the dashboard daemon. See
 // lib/api/analytics.py and frontend/pages/analytics.jsx.
 
+Object.assign(window, { ANALYTICS });
 Object.assign(window, { DATA_SETS, FOLDERS, TOOL_WORKFLOWS, TERM_CONTEXT });
 
 // ── Real-data fetchers (M1 wiring) ─────────────────────────────────
