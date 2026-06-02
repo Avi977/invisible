@@ -22,7 +22,9 @@ Authentication:
     --no-auth unless --host is 127.0.0.1.
 
 What it does NOT do:
-  - Writes. Everything is GET. No POST, no kill switch.
+  - General writes / kill switch. The only write surface is the Tools
+    workflow CRUD on /api/v1/tools (PUT/DELETE, auth-gated); everything
+    else is GET (plus the POST /api/v1/chat proxy).
   - Cross-machine state aggregation. Shows whatever's in this machine's
     $INVISIBLE_HOME/worktrees + whatever Notion has. If you run the
     orchestrator on Mac and the dashboard on VPS, the project list will be
@@ -61,6 +63,7 @@ from dashboard_render import (  # noqa: E402
 )
 from api import ROUTES as API_V1_ROUTES  # noqa: E402
 from api import tree_local, tree_vps, tree_repo  # noqa: E402  — GET /api/v1/tree/{local,vps,repo}
+from api import tools  # noqa: E402  — GET/PUT/DELETE /api/v1/tools
 from api.chat import chat_handler  # noqa: E402  — POST /api/v1/chat proxy to `claude -p`
 
 
@@ -404,6 +407,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(payload, status=status)
             return
 
+        # Tools workflow CRUD (M2). Routed explicitly with a terminating
+        # return — NOT via API_V1_ROUTES, whose dispatch is missing its return.
+        if path == "/api/v1/tools":
+            tools.handle_get(self)
+            return
+
         self._send_text("not found\n", 404)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
@@ -488,6 +497,106 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {"error": "server_error",
                  "hint": "unexpected exception in POST dispatch"},
+                500,
+            )
+
+    # ---- PUT routing (writes) ----
+    def do_PUT(self) -> None:  # noqa: N802
+        """PUT /api/v1/tools — mirrors do_POST's auth + body-cap + parse flow.
+
+        Auth-gates first (so --no-auth short-circuits), enforces the same
+        Content-Length cap (413) and JSON-parse→400 as do_POST, stashes the
+        parsed payload on self._json_body for tools.handle_put, then dispatches
+        the route. Unknown paths → 404; any unexpected exception → 500 with the
+        traceback to stderr only.
+        """
+        path = urllib.parse.urlparse(self.path).path
+
+        # Auth gate identical to do_POST (so --no-auth still short-circuits).
+        if not self._auth_ok():
+            sys.stderr.write(
+                f"[dashboard] auth failed from {self.client_address[0]} "
+                f"for PUT {path}\n"
+            )
+            self._send_text("unauthorized\n", 401)
+            return
+
+        # Read body with a defensive size cap. Content-Length may be missing
+        # or invalid; treat both as 0-length.
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            length = 0
+        if length < 0:
+            length = 0
+        if length > self._MAX_POST_BYTES:
+            self._send_json(
+                {"error": "message_too_large",
+                 "hint": f"body exceeds {self._MAX_POST_BYTES} bytes"},
+                413,
+            )
+            return
+        raw = self.rfile.read(length) if length else b""
+
+        # Parse JSON early; share do_POST's bad-request handling.
+        try:
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._send_json(
+                {"error": "bad_request", "hint": "body must be JSON"},
+                400,
+            )
+            return
+
+        # Body hand-off contract: tools.handle_put reads self._json_body.
+        self._json_body = payload
+
+        # Route dispatch.
+        try:
+            if path == "/api/v1/tools":
+                tools.handle_put(self)
+                return
+            self._send_text("not found\n", 404)
+        except Exception:  # noqa: BLE001  — last-resort guard
+            import traceback
+            traceback.print_exc()
+            self._send_json(
+                {"error": "server_error",
+                 "hint": "unexpected exception in PUT dispatch"},
+                500,
+            )
+
+    # ---- DELETE routing (writes) ----
+    def do_DELETE(self) -> None:  # noqa: N802
+        """DELETE /api/v1/tools — auth-gated, no body read.
+
+        Auth-gates first (so --no-auth short-circuits), then dispatches the
+        route. Unknown paths → 404; any unexpected exception → 500 with the
+        traceback to stderr only.
+        """
+        path = urllib.parse.urlparse(self.path).path
+
+        # Auth gate identical to do_POST (so --no-auth still short-circuits).
+        if not self._auth_ok():
+            sys.stderr.write(
+                f"[dashboard] auth failed from {self.client_address[0]} "
+                f"for DELETE {path}\n"
+            )
+            self._send_text("unauthorized\n", 401)
+            return
+
+        # Route dispatch (no request body for DELETE).
+        try:
+            if path == "/api/v1/tools":
+                tools.handle_delete(self)
+                return
+            self._send_text("not found\n", 404)
+        except Exception:  # noqa: BLE001  — last-resort guard
+            import traceback
+            traceback.print_exc()
+            self._send_json(
+                {"error": "server_error",
+                 "hint": "unexpected exception in DELETE dispatch"},
                 500,
             )
 
