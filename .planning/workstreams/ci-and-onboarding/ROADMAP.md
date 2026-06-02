@@ -10,7 +10,7 @@
 - [ ] **Phase 2: First-run wizard** — Tauri-side onboarding (Infisical creds, VPS host, first project)
 - [ ] **Phase 3: `invisible-doctor` polish** — fresh-machine setup story
 
-## Phase 1 Details — GitHub Actions CI
+### Phase 1: GitHub Actions CI
 
 **Goal:** Every push and PR runs lint + tests + an import-smoke. PR #3
 (claude-code-security-review) merges in or is replaced by an equivalent
@@ -27,10 +27,10 @@ job.
 5. Required-check on the `main` branch in GitHub branch-protection (you may not have permissions; document the manual setting).
 
 **Plans:** 2 plans
-- [ ] 01-01: `.github/workflows/ci.yml` + any required `pyproject.toml` / `ruff.toml` config
-- [ ] 01-02: Wire any existing tests; verify all 3 jobs green; either merge or close PR #3 (security-review)
+- [ ] 01-01-PLAN.md — Create `.github/workflows/ci.yml` (lint + test + import-smoke jobs), `ruff.toml`, and pytest config (`pyproject.toml`). Covers D-01..D-05.
+- [ ] 01-02-PLAN.md — Verify all 3 jobs green on GitHub, add README CI badge, document branch-protection (BRANCH-PROTECTION.md), and merge PR #3 behind a confirm. Covers D-03, D-06, D-07.
 
-## Phase 2 Details — First-run wizard
+### Phase 2: First-run wizard
 
 **Goal:** A new user running the Tauri app for the first time gets a
 guided setup: Infisical creds, VPS host (optional), first project, then
@@ -52,7 +52,7 @@ lands on the Dashboard.
 - [ ] 02-01: Wizard React component(s) under `frontend/onboarding/`
 - [ ] 02-02: Tauri-side bridge: detect missing config, route to wizard, write files on completion
 
-## Phase 3 Details — invisible-doctor polish
+### Phase 3: invisible-doctor polish
 
 **Goal:** A fresh-machine clone + `./scripts/install-hooks.sh` + run
 `invisible-doctor` should clearly tell the user what's missing and how
