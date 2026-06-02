@@ -4,36 +4,36 @@ milestone: v1.0
 milestone_name: M2
 current_phase: 1
 current_plan: 2
-status: executing
+status: shipped
 stopped_at: N/A
-last_updated: "2026-06-02T04:24:00.000Z"
+last_updated: "2026-06-02T04:54:00.000Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 50
+  completed_plans: 2
+  percent: 100
 ---
 
 # Project State
 
 ## Current Position
 
-Phase: 1 (/api/v1/relations + Relations page wired) — EXECUTING
-Plan: 2 of 2 (Plan 01-01 backend SHIPPED; 01-02 frontend pending)
-**Status:** Plan 01-01 complete — backend `/api/v1/relations` shipped
-**Current Phase:** 1
+Phase: 1 (/api/v1/relations + Relations page wired) — **COMPLETE**
+Plan: 2 of 2 (both 01-01 backend AND 01-02 frontend SHIPPED)
+**Status:** Workstream Phase 1 complete — relations API + Relations page both wired end-to-end and human-verified in the browser
+**Current Phase:** 1 (DONE)
 **Last Activity:** 2026-06-02
-**Last Activity Description:** Plan 01-01 SHIPPED — backend relations API committed (`5eefcdd` Task 1, `9f86984` Task 2, `06f0014` Task 3); SUMMARY written
+**Last Activity Description:** Plan 01-02 SHIPPED — relations frontend wired (`68d9b8a` Task 1, `c73a452` Task 2), CORS fix `c18ca74` (Wave 2 deviation), Task 3 human-verify APPROVED via Chrome DevTools MCP (5/5 checks PASS), SUMMARY written
 
 ## Progress
 
-**Phases Complete:** 0
-**Current Plan:** 2 (frontend swap pending — Plan 01-02)
-**Plans Complete:** 1 of 2
+**Phases Complete:** 1 of 1 (100%)
+**Current Plan:** N/A (workstream Phase 1 complete)
+**Plans Complete:** 2 of 2 (100%)
 
-## Plan 01-01 Outcome
+## Plan 01-01 Outcome (backend)
 
 - `lib/api/relations.py` ships with 4 derivers + 60s cache + `^[a-z0-9_-]{1,64}$` slug validator
 - `lib/api/__init__.py` registers `/api/v1/relations` → `relations.handle_relations`
@@ -42,7 +42,26 @@ Plan: 2 of 2 (Plan 01-01 backend SHIPPED; 01-02 frontend pending)
 - `# PLAN-01-01 verification log` marker block appended for Plan 02 to grep
 - See `.planning/workstreams/relations-page/phases/INV-01-api-v1-relations-relations-page-wired/01-01-SUMMARY.md`
 
+## Plan 01-02 Outcome (frontend)
+
+- `frontend/pages/relations.jsx` swapped from hardcoded 19-node mock GRAPH to self-fetching shell against `GET /api/v1/relations?project=invisible` on mount (172 → 387 lines)
+- Deterministic concentric-ring layout (project 90px → module 180px → doc 260px → endpoint 340px); backend kinds `{module, doc, project, endpoint}` mapped to existing CSS classes `{kind-repo, kind-note, kind-project, kind-tool}` without touching `styles.css`
+- Four-branch UI: Loading / Error (Retry + Show empty) / Empty (No relations yet) / Loaded — no React white screen on backend down
+- Drag (`mousemove`/`mouseup`), hover-focus (dim non-connected to 0.32), four legend filter chips, Reset button (snaps back to ring layout) all preserved
+- `// PLAN-01-02 verification log` marker appended at file bottom
+- **Wave 2 deviation `c18ca74` (Rule 1 — Bug):** Removed pre-existing duplicate `Access-Control-Allow-Origin` header emission in `bin/invisible-dashboard._send_json` that was making browsers reject `/api/v1/*` fetches; single ACAO `*` from `end_headers()` is now the single source of truth. Surfaced during human-verify Check 1 (the first browser-driven `/api/v1/*` fetch path); side benefit: also fixes `/api/v1/projects` and every other sibling-workstream `/api/v1/*` browser fetch
+- Human-verify (Task 3) APPROVED via Chrome DevTools MCP — all 5 plan checks PASS (Loading→Loaded, drag, hover, filter chips, Reset, error branch, empty branch); 94 nodes (29 modules + 60 docs + 5 endpoints + 0 projects-when-Notion-unset) / 220 edges rendered
+- See `.planning/workstreams/relations-page/phases/INV-01-api-v1-relations-relations-page-wired/01-02-SUMMARY.md`
+
 ## Session Continuity
 
-**Stopped At:** End of Plan 01-01 — ready for Plan 01-02 (frontend swap)
-**Resume File:** `.planning/workstreams/relations-page/phases/INV-01-api-v1-relations-relations-page-wired/01-02-PLAN.md`
+**Stopped At:** End of workstream Phase 1 — both plans shipped; nothing left to execute in this workstream's M2 scope
+**Resume File:** N/A (workstream complete)
+
+## Follow-ups (deferred to sibling workstreams or future plans)
+
+- Stale `frontend/app.jsx:91` `PAGE_HEADERS["relations"]` chip hardcoded `"18 NODES · 22 LINKS"` — in shared app shell (MUST NOT TOUCH zone for this workstream); flag for sibling-workstream or follow-up plan
+- Zoom-in button in `frontend/pages/relations.jsx` graph-controls is a no-op with `// TODO: zoom support` comment — pickup for a future plan
+- Client-side `AbortController` timeout on `fetchRelations` (T-01-02-04 disposition: accept; deferred)
+- Force-directed layout sim (current is deterministic concentric rings; sim is a follow-up if visual preference shifts)
+- SSE / watch-mode for live graph updates (deferred to follow-up plan)
