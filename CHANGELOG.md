@@ -59,6 +59,10 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-02-01:** plan summary — native .app/.dmg verified, README workaround landed (ef555e8)
+- **INV-02:** seed PHASE-VERIFICATION — unsigned .app/.dmg build (039dc65)
+- **tauri-windows:** add macOS Gatekeeper unblock section to README (38feb03)
+- **INV-02:** seed CONTEXT.md — ship unsigned (no Apple Dev ID) (4327fa5)
 - **INV-01:** PHASE-VERIFICATION + ROADMAP NSIS switch (b87c4ee)
 - update CHANGELOG (rebase) (af17141)
 - **INV-02:** record Task 6 self-check in SUMMARY (e8294bb)
