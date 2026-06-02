@@ -1,5 +1,7 @@
 # invisible
 
+![ci](https://github.com/Avi977/invisible/actions/workflows/ci.yml/badge.svg)
+
 A personal multi-agent cockpit. Orchestrates Codex and Claude in turn-taking
 loops against your projects, with checkpoints, context budgeting, VPS handoff,
 Notion sync, Infisical-backed secrets, Telegram alerts, and a tmux-based

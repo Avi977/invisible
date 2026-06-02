@@ -15,31 +15,6 @@ overwritten on the next push.
 
 ### Features
 
-- **INV-03:** release.yml + auto-updater (bundle.createUpdaterArtifacts) (67061a7)
-- **tauri-windows:** add plugins.updater block with Tauri 2.x pubkey + endpoint placeholder (42ed4cb)
-- **INV-01-02:** remove TOOL_WORKFLOWS mock + fix ProjectPicker + gitignore workflows/ (0ded410)
-- **INV-01-02:** load workflow on switch + debounced autosave + status footer (ca4be48)
-- **01-02:** swap relations.jsx mock GRAPH for /api/v1/relations fetch + states (68d9b8a)
-- **01-01:** wire /api/v1/tools into daemon (GET branch, do_PUT, do_DELETE) (af2a9b2)
-- **01-01:** implement /api/v1/tools CRUD module (f70e00a)
-- **INV-01-02:** wire Calendar page to /api/v1/calendar (18b2b33)
-- **01-01:** wire /api/v1/relations route in api/__init__.py + fix dispatch fallthrough (9f86984)
-- **01-01:** add lib/api/relations.py with 3 derivers + 60s cache (5eefcdd)
-- **INV-01-01:** register /api/v1/calendar + fix registry dispatch return (e9c6435)
-- **INV-01-01:** lib/api/calendar.py — 3-source aggregator with SSRF guards (8a3d961)
-- **INV-01-01:** query_calendar_db helper in lib/notion.py (57a6261)
-- **01-01:** upgrade invisible-doctor check_ssh() with ControlMaster timing + stderr sanitizer (19a5759)
-- **tauri-windows:** add MSI bundle target + WiX en-US config (32c9cea)
-- **INV-01-02:** remove ANALYTICS mock from data.jsx (c83708d)
-- **INV-01-02:** wire analytics.jsx to GET /api/v1/analytics with 30s polling (ca94c44)
-- **INV-01-01:** wire GET /api/v1/analytics route into invisible-dashboard (a1b0093)
-- **INV-01-01:** aggregator with 30s cache + Notion UUID→slug map (dd70a5d)
-- **INV-01-01:** persist usage telemetry on review rows (18e885e)
-- **INV-02:** tauri shell with tray + 5 commands + SSE bridge (e84209f)
-- **INV-02:** SSE bridge with polling fallback + frontend-vite/src/lib/tauri.js (cd208c2)
-- **INV-02:** system tray and close-to-hide window event (20671e8)
-- **INV-02:** five Tauri commands wrapping CLI surface (db04421)
-- **INV-02:** scaffold src-tauri/ Tauri 2.x project (4fb337b)
 - **01-01:** INVISIBLE_PTY_EXTRA_ORIGINS env var for sibling-workstream testing (ed21f33)
 - **01-02:** make Dashboard self-fetching with loading + error + fallback (89a3135)
 - **01-02:** add fetchProjects() helper to data.jsx for real /api/v1/projects (d0dd0f5)
@@ -68,16 +43,6 @@ overwritten on the next push.
 
 ### Bug Fixes
 
-- **01-02:** shlex.quote remote_cmd in _ssh_argv so globs survive intact (fa32e9f)
-- **01:** resolve config.home() in _project_root for symlink-stable imports (c6a58e7)
-- **01-02:** remove duplicate ACAO header that broke browser CORS (c18ca74)
-- **01-01:** single-source loopback CORS + collapse duplicate do_OPTIONS (51deb7a)
-- **INV-01-02:** dedupe Access-Control-Allow-Origin header on JSON responses (a0fc83b)
-- **INV-01:** correct 01-02 depends_on to resolvable plan id (01-01) so it waves after backend (5706fa2)
-- **tauri-windows:** switch from MSI to NSIS — Tauri 2.x MSI bundler is host-Windows-only (265d998)
-- **INV-01-02:** add CORS header to dashboard JSON/text responses (e6e31e6)
-- **tauri:** also update tauri.conf.json (companion to 0d56203 plan-doc fix) (27d4de0)
-- **tauri:** beforeDevCommand cwd is project root, not src-tauri/ (9b41a50)
 - **01-03:** TerminalPane name + 6-pane grid layout (12dc319)
 - **dashboard:** add CORS preflight + headers for bubble on :8090 (7ef22aa)
 - **orchestrator:** grant codex workspace-write sandbox so it can modify files (ceb99d0)
@@ -85,55 +50,17 @@ overwritten on the next push.
 
 ### Documentation
 
-- **INV-03-01:** plan summary — release.yml + updater artefacts shipped; first release gated on user GHA-secret upload (4661553)
-- **INV-02-02:** plan summary — Tauri updater keypair generated, pubkey inlined, Infisical upload deferred to user ceremony (60d4cc5)
-- **INV-02:** append updater-keypair verification — pubkey inline, private key local + Infisical upload deferred (f58b67c)
-- **INV-02-01:** plan summary — native .app/.dmg verified, README workaround landed (ef555e8)
-- **INV-02:** seed PHASE-VERIFICATION — unsigned .app/.dmg build (039dc65)
-- **01:** ship vps-connection phase 1 — PR #12 (1780861)
-- **tauri-windows:** add macOS Gatekeeper unblock section to README (38feb03)
-- **phase-01:** add security threat verification (18/18 closed) (0bc5c59)
-- **phase-01:** verification report (PASSED 5/5) (afd5cd5)
-- **01-02:** complete tree_vps verify-and-harden plan (44bd3d9)
-- **01-01:** complete SSH ControlMaster setup (4c7d76a)
-- **01:** update CONTEXT.md with M2 ship status + add SHIPPED.md (da139bc)
-- **INV-01:** update project CONTEXT.md — M2 tools-page shipped (PR #10) (b6f8ee3)
-- **01:** ship phase 1 — PR #11 (8d17265)
-- **INV-02:** seed CONTEXT.md — ship unsigned (no Apple Dev ID) (4327fa5)
-- **phase-1:** close phase — verifier PASSED + code review + followups (079642c)
-- **INV-01:** ship phase 1 — PR #10 (6ee823e)
-- **phase-1:** complete phase execution — Tools page wired + verified (a84f80c)
-- **01-02:** summary — relations frontend wired + dashboard CORS fix (ddb774c)
-- **01:** ship phase 1 — PR #9 (4e5c635)
-- **INV-01:** mark 01-02 complete — phase plans done (4892dbf)
-- **INV-01-02:** summary — Tools page wired + real-browser E2E verified (9e6efd1)
-- **INV-01:** phase 1 VERIFICATION PASS — 8/8 success criteria, 14/14 threats mitigated (d4793e6)
-- **INV-01:** mark 01-01 complete after wave 1 (5b97560)
-- **01-01:** record self-check PASSED in SUMMARY (d7ada2f)
-- **01-01:** complete /api/v1/tools CRUD backend plan (d0e854a)
-- **INV-01-02:** summary — Calendar page wired to /api/v1/calendar (b7d7aaf)
-- **01-01:** summary — backend relations API shipped (e755bc4)
-- **INV-01:** mark phase 1 executing (bca4928)
-- **INV-01-01:** summary — /api/v1/calendar shipped with 3 sources + SSRF + cache (df9aeb7)
-- **INV-01-01:** [calendar] block in invisible.toml.example (0df89ff)
-- **INV-01:** fold plan-checker advisories into plans + init workstream STATE.md (0e44b2c)
-- **01:** create phase plan — relations-page api+frontend (0e1de84)
-- **INV-01:** create phase plan for /api/v1/tools CRUD + Tools page wired (6f470a0)
-- **ws/calendar-events:** plan phase 1 — calendar API + frontend wiring (4b877a1)
-- **INV-01:** PHASE-VERIFICATION + ROADMAP NSIS switch (b87c4ee)
-- **01-01:** add 'VPS connection setup' section to README under Setup (10f61e3)
-- **01-01:** flesh out [vps] block in invisible.toml.example with worked example (e8af0bc)
-- **01:** plan vps-connection phase 1 (SSH ControlMaster) (25197f0)
-- **INV-01:** fix ROADMAP detail section + author phase context (fde5d60)
-- **planning:** patch vps-connection ROADMAP to canonical phase-detail format + add workstream STATE (fa48661)
-- **planning:** M3 draft — 3 forward directions for post-v1.0 (16e9358)
-- **INV-01:** phase verification PASS — REQ-05 complete (f6d07aa)
-- **INV-01-02:** summary — frontend wiring + live UAT + CORS fix complete (7dafaed)
-- **INV-01-01:** summary — backend aggregator + 30s cache complete (ac5b259)
-- **01:** begin phase 1 — analytics aggregator + frontend wiring (3ad00be)
-- **01:** plan phase 1 analytics aggregator + frontend wiring (22de387)
-- update CHANGELOG (rebase) (af17141)
-- **INV-02:** record Task 6 self-check in SUMMARY (e8294bb)
+- record no-API-keys design constraint + PR #3 revert in context (955fc67)
+- **INV-01:** reflect PR #3 revert — security-review needs an API key (conflicts with no-API-key CLI design) (3ff5e36)
+- **INV-01:** mark Phase 1 complete in workstream STATE (7d1cfa8)
+- **INV-01:** add phase verification — goal achieved 12/12; 3 owner follow-ups (7ed36ab)
+- **INV-01:** plan 01-02 complete — PR #3 merged, CI green on GitHub (e700b14)
+- **INV-01-02:** summarize plan 01-02 (CI green + badge + runbook); Task 3 awaiting human merge approval (e5dce58)
+- **INV-01-02:** add CI badge to README + branch-protection runbook (dec86a2)
+- **INV-01:** mark plan 01-01 complete (CI pipeline files landed) (0647f68)
+- **INV-01-01:** add execution summary for CI pipeline plan (dd0181d)
+- **INV-01:** add phase context, patterns, and workstream state (aa51236)
+- **INV-01:** create phase plan for GitHub Actions CI (7f8b21a)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
 - **phase-01:** add security threat verification (16/16 closed) (f8daac6)
@@ -172,11 +99,6 @@ overwritten on the next push.
 
 ### Tests
 
-- **01-02:** integration scaffolding — pytest.ini, conftest, live tests (88d3acb)
-- **01-02:** hermetic unit tests for tree_vps.walk_all + _walk_remote (36fa0ec)
-- **01-02:** static + headless E2E checks for relations frontend (c73a452)
-- **01-01:** verify wire shape + slug validation + Notion-degrade end-to-end (06f0014)
-- **01-01:** add failing tests for /api/v1/tools CRUD (63b5624)
 - **01-01:** add failing tests for /api/v1/projects adapter (7f0565e)
 - **01-02:** verify reconnect persistence + add PLAN-02 verification log (8262065)
 - **01-01:** verify four threat-model gates end-to-end + log marker (1b241a5)
@@ -186,15 +108,14 @@ overwritten on the next push.
 
 - **frontend-vite:** production dist/ verified Tauri-ready (f0d692b)
 
+### CI
+
+- **INV-01-01:** add CI pipeline (lint, test, import-smoke) (e2ec1a6)
+
 ### Chores
 
-- add claude-code-security-review as required PR check (#3) (692dc52)
-- **planning:** bootstrap M2 — 6 workstreams + recovery cleanup script (47d0065)
+- **INV-01-01:** add lenient ruff + pytest config for CI (5e88b4e)
 - **gitignore:** untrack START_HERE.md (per-worktree scaffold) (d5c369b)
 - **planning:** untrack .planning/active-workstream (989c449)
-
-### Other
-
-- Revert "chore: add claude-code-security-review as required PR check (#3)" (23de0da)
 
 <!-- END AUTOGENERATED -->

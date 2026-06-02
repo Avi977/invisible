@@ -1,0 +1,20 @@
+# Minimal pyproject.toml — pytest configuration ONLY.
+#
+# This file intentionally declares no [build-system], no [project] metadata,
+# and no dependencies. `invisible` ships no dependency manifest in this phase
+# (decision D-05): the `api.*` package and its transitive local imports are
+# pure stdlib, and CI installs only the `ruff` + `pytest` tooling it needs.
+#
+# Why `testpaths` lists two directories: the suite is split across the repo.
+#   - tests/test_api_projects.py   lives under tests/
+#   - lib/api/test_chat.py         is colocated with its source under lib/api/
+# A bare `pytest tests/` would silently skip test_chat.py, so both roots are
+# named explicitly (decision D-03).
+#
+# Import path: there is no `lib/__init__.py`, so `api` is a top-level package
+# importable only with `lib/` on sys.path. The CI test job supplies that via
+# `PYTHONPATH=lib` (the test files also self-insert lib/ as a fallback), so no
+# `pythonpath` key is configured here.
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "lib/api"]
