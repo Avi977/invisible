@@ -8,7 +8,9 @@
 
 - [ ] **Phase 1: `/api/v1/relations` + Relations page wired**
 
-## Phase 1 Details
+## Phase Details
+
+### Phase 1: `/api/v1/relations` + Relations page wired
 
 **Goal:** Obsidian-style graph page renders **real** nodes + edges
 derived from the project's own code, not the mock graph in `data.jsx`.
