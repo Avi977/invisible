@@ -55,6 +55,10 @@ overwritten on the next push.
 
 ### Documentation
 
+- **01:** update CONTEXT.md with M2 ship status + add SHIPPED.md (da139bc)
+- **01:** ship phase 1 — PR #9 (4e5c635)
+- **INV-01:** phase 1 VERIFICATION PASS — 8/8 success criteria, 14/14 threats mitigated (d4793e6)
+- **INV-01-02:** summary — Calendar page wired to /api/v1/calendar (b7d7aaf)
 - **INV-01-01:** summary — /api/v1/calendar shipped with 3 sources + SSRF + cache (df9aeb7)
 - **INV-01-01:** [calendar] block in invisible.toml.example (0df89ff)
 - **ws/calendar-events:** plan phase 1 — calendar API + frontend wiring (4b877a1)

@@ -1,7 +1,20 @@
 // Analytics — tokens used per project + time spent, plus tool / action breakdowns.
-// Range filter: 7d / 30d. Project filter: all / one.
+// Range filter: 7d / 14d / 30d. Project filter: all / one.
+// Data: live from GET /api/v1/analytics (lib/api/analytics.py), 30s polling.
 
-const { useState: useStateA, useMemo: useMemoA } = React;
+const { useState: useStateA, useMemo: useMemoA, useEffect: useEffectA } = React;
+
+// Read bearer token from URL ?token= (pywebview injects it; bin/invisible-app)
+// or window.__INVISIBLE_TOKEN__ (future host shells: Tauri, etc.). In --no-auth
+// dev mode this returns "" and the daemon accepts the unauthed request.
+// THIS IS THE CANONICAL PATTERN — sibling workstreams should copy this verbatim.
+function getToken() {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('token');
+    if (fromUrl) return fromUrl;
+  } catch (_) { /* SSR / non-browser: ignore */ }
+  return (typeof window !== 'undefined' && window.__INVISIBLE_TOKEN__) || '';
+}
 
 const PROJECT_ORDER = ["echo", "lumen", "drift", "atlas", "rune", "ferry"];
 
@@ -198,52 +211,93 @@ function ActionsTable({ rows, projectColor }) {
 
 function Analytics({ projects }) {
   const [range, setRange] = useStateA(30);          // days
-  const [projFilter, setProjFilter] = useStateA("all"); // "all" or project id
+  const [projFilter, setProjFilter] = useStateA("all"); // "all" or project id (slug)
   const [mode, setMode] = useStateA("tokens");      // "tokens" or "time"
+  const [data, setData] = useStateA(null);
+  const [err, setErr] = useStateA(null);
+
+  // Fetch loop: on mount, on filter change, and every 30s. Matches PLAN-01's
+  // 30s in-process cache TTL — most polls hit cache and return in <10ms.
+  useEffectA(() => {
+    let alive = true;
+    const refetch = () => {
+      const u = new URL('http://127.0.0.1:8765/api/v1/analytics');
+      u.searchParams.set('range', `${range}d`);
+      if (projFilter && projFilter !== 'all') u.searchParams.set('project', projFilter);
+      const tok = getToken();
+      if (tok) u.searchParams.set('token', tok);
+      fetch(u.toString())
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+        .then(json => { if (alive) { setData(json); setErr(null); } })
+        .catch(e => { if (alive) setErr(String(e.message || e)); });
+    };
+    refetch();
+    const id = setInterval(refetch, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, [range, projFilter]);
+
+  // Loading placeholder before the first response lands.
+  if (!data) {
+    return <div className="anlt" style={{ padding: 24, opacity: 0.6 }}>Loading analytics…</div>;
+  }
 
   const projectMap = Object.fromEntries(projects.map(p => [p.id, p]));
-  const activeProjects = PROJECT_ORDER.filter(pid => projectMap[pid]);
+  // Only show projects that exist in DATA_SETS AND have data in this window.
+  const activeProjects = PROJECT_ORDER.filter(pid => projectMap[pid] && data.by_project[pid]);
+  const visibleProjects = projFilter === "all" ? activeProjects : (activeProjects.includes(projFilter) ? [projFilter] : []);
 
-  // Active project list for charts
-  const visibleProjects = projFilter === "all" ? activeProjects : [projFilter];
+  // Backend emits RAW token counts everywhere. The existing chart math does
+  // fmtK(v * 1000), so series values must be in kilo-tokens before they
+  // reach StackedAreaChart. Divide here; chart is untouched (per scope rules).
+  const tokenData = Object.fromEntries(activeProjects.map(pid => [
+    pid, (data.series.tokensByDay[pid] || Array(range).fill(0)).map(v => v / 1000),
+  ]));
+  const timeData = Object.fromEntries(activeProjects.map(pid => [
+    pid, data.series.timeByDay[pid] || Array(range).fill(0),
+  ]));
 
-  // Sliced data
-  const tokenData = Object.fromEntries(activeProjects.map(pid => [pid, lastN(ANALYTICS.tokensByDay[pid] || [], range)]));
-  const timeData  = Object.fromEntries(activeProjects.map(pid => [pid, lastN(ANALYTICS.timeByDay[pid] || [], range)]));
-
-  // Totals
-  const totalTokensK = sum(visibleProjects.flatMap(pid => tokenData[pid] || []));
-  const totalHours   = sum(visibleProjects.flatMap(pid => timeData[pid] || []));
-  const prevTokensK  = sum(visibleProjects.flatMap(pid => {
-    const full = ANALYTICS.tokensByDay[pid] || [];
-    return full.slice(-range * 2, -range);
-  }));
-  const tokenDelta = prevTokensK ? Math.round(((totalTokensK - prevTokensK) / prevTokensK) * 100) : 0;
+  // Totals: use top-level when projFilter is "all", per-project bucket otherwise.
+  const totalsBucket = projFilter === "all"
+    ? { input: data.totals.input_tokens, output: data.totals.output_tokens, minutes: data.totals.total_minutes }
+    : (() => {
+        const b = data.by_project[projFilter] || { input_tokens: 0, output_tokens: 0, minutes: 0 };
+        return { input: b.input_tokens, output: b.output_tokens, minutes: b.minutes };
+      })();
+  const totalTokensK = (totalsBucket.input + totalsBucket.output) / 1000;
+  const totalHours = totalsBucket.minutes / 60;
   const avgPerDay = Math.round((totalTokensK * 1000) / range);
 
-  // Top project by tokens (current window)
-  const projTotals = activeProjects.map(pid => ({ pid, tokens: sum(tokenData[pid] || []) * 1000, time: sum(timeData[pid] || []) }));
+  // tokenDelta: first-half vs second-half sums within the visible window.
+  // Renders "—" when both halves are zero (no signal yet).
+  const visTokens = visibleProjects.flatMap(pid => tokenData[pid] || []);
+  const half = Math.floor(visTokens.length / 2);
+  const firstHalf = sum(visTokens.slice(0, half));
+  const secondHalf = sum(visTokens.slice(half));
+  const tokenDelta = (firstHalf === 0 && secondHalf === 0)
+    ? null
+    : (firstHalf === 0
+        ? 100
+        : Math.round(((secondHalf - firstHalf) / firstHalf) * 100));
+
+  // Top project by tokens (current window).
+  const projTotals = activeProjects.map(pid => {
+    const bucket = data.by_project[pid] || { input_tokens: 0, output_tokens: 0, minutes: 0 };
+    return {
+      pid,
+      tokens: bucket.input_tokens + bucket.output_tokens,
+      time: bucket.minutes / 60,
+    };
+  });
   const topProj = projTotals.slice().sort((a, b) => b.tokens - a.tokens)[0];
 
-  // Tool breakdown (aggregated across visible projects)
-  const toolAgg = (() => {
-    const m = new Map();
-    visibleProjects.forEach(pid => {
-      (ANALYTICS.toolBreakdown[pid] || []).forEach(t => {
-        const key = t.name;
-        const cur = m.get(key) || { id: key, label: key, value: 0, color: t.c };
-        cur.value += t.tokens;
-        m.set(key, cur);
-      });
-    });
-    return Array.from(m.values()).sort((a, b) => b.value - a.value).filter(t => t.value > 0).slice(0, 6);
-  })();
+  // Tool breakdown — straight from backend, top 6.
+  const toolAgg = (data.top_tools || [])
+    .map(t => ({ id: t.name, label: t.name, value: t.total_tokens, color: t.color }))
+    .filter(t => t.value > 0)
+    .slice(0, 6);
 
-  // Top actions (aggregated across visible projects)
-  const actionRows = (() => {
-    const all = visibleProjects.flatMap(pid => ANALYTICS.topActions[pid] || []);
-    return all.slice().sort((a, b) => b.tokens - a.tokens).slice(0, 8);
-  })();
+  // Top actions — backend already returns top 8 sorted desc.
+  const actionRows = data.top_actions || [];
 
   return (
     <div className="anlt">
@@ -275,6 +329,11 @@ function Analytics({ projects }) {
         </div>
 
         <div className="anlt-filter-group" style={{ marginLeft: "auto" }}>
+          {err && (
+            <span title={`Fetch failed: ${err}`} style={{ color: "#ff6b6b", marginRight: 8, fontSize: 16, lineHeight: 1 }}>
+              ●
+            </span>
+          )}
           <button className={"anlt-pill " + (mode === "tokens" ? "active" : "")} onClick={() => setMode("tokens")}>
             <I.Coin size={11}/> Tokens
           </button>
@@ -289,12 +348,16 @@ function Analytics({ projects }) {
         <StatCard
           label="Total tokens"
           value={fmtK(totalTokensK * 1000)}
-          sub={<>
-            <span style={{ color: tokenDelta >= 0 ? "var(--c-term)" : "#ff7a7a" }}>
-              {tokenDelta >= 0 ? "↗" : "↘"} {Math.abs(tokenDelta)}%
-            </span>
-            <span> vs prev {range}d</span>
-          </>}
+          sub={tokenDelta === null ? (
+            <span style={{ color: "var(--text-4)" }}>— no trend yet</span>
+          ) : (
+            <>
+              <span style={{ color: tokenDelta >= 0 ? "var(--c-term)" : "#ff7a7a" }}>
+                {tokenDelta >= 0 ? "↗" : "↘"} {Math.abs(tokenDelta)}%
+              </span>
+              <span> trend in {range}d</span>
+            </>
+          )}
           accent="var(--c-anlt)"
           icon={<I.Coin size={14}/>}
         />

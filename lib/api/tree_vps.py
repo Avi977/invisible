@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -168,13 +169,23 @@ def _cm_path() -> str:
 
 
 def _ssh_argv(host: str, identity: str, *remote_cmd: str) -> list[str]:
-    """Build the argv for an SSH call; never invoke a shell.
+    """Build the argv for an SSH call; never invoke a local shell.
 
     The ``--`` before ``*remote_cmd`` terminates SSH's option parsing so
     a remote path beginning with ``-`` can't be mistaken for an SSH
     flag. ``BatchMode=yes`` prevents any interactive password prompt
     (we rely on key-based auth). ``ControlMaster=auto`` + the dedicated
     socket path under ``$INVISIBLE_HOME/run`` makes repeat calls fast.
+
+    Remote-shell tokenization: OpenSSH joins ``*remote_cmd`` with spaces
+    and pipes the result to the remote ``$SHELL -c`` — so glob characters
+    (``*``, ``?``, ``[]``) and other shell-meta in ``remote_cmd`` would be
+    re-tokenized AND glob-expanded by the remote shell against the remote
+    CWD. We ``shlex.quote`` each element so the remote shell sees them as
+    literal arguments. This was found end-to-end against srv982719 in
+    Plan 01-02 — without quoting, ``find ... -path */.git*`` would have
+    ``*/.git*`` glob-expanded by the remote shell against ``/home/avi``,
+    breaking the find call.
     """
     return [
         "ssh",
@@ -186,7 +197,7 @@ def _ssh_argv(host: str, identity: str, *remote_cmd: str) -> list[str]:
         "-i", os.path.expanduser(identity),
         host,
         "--",
-        *remote_cmd,
+        *(shlex.quote(arg) for arg in remote_cmd),
     ]
 
 

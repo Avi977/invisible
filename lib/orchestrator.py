@@ -424,12 +424,15 @@ def run_loop(*, project: str, task: str, project_notion_id: str | None,
         codex_input = task + research_section + feedback_blob
 
         # ── Codex ──
+        codex_started = notion.now_iso()
         cr = run_codex_with_retries(codex_input, feature, codex_sys, log)
+        codex_completed = notion.now_iso()
         if not cr.ok:
             notion.log_review(project_id=project_notion_id,
                               iteration=state["iteration"], agent="Codex",
                               verdict="Blocked", summary="codex failed after retries",
-                              body_md=f"```\n{cr.stderr[-3000:]}\n```")
+                              body_md=f"```\n{cr.stderr[-3000:]}\n```",
+                              started_at=codex_started, completed_at=codex_completed)
             checkpoint.save(feature, state)
             return 1
 
@@ -442,16 +445,21 @@ def run_loop(*, project: str, task: str, project_notion_id: str | None,
                           agent="Codex", verdict="Comment",
                           summary=f"codex committed {sha}",
                           body_md=f"### Codex output\n\n```\n{cr.stdout[:6000]}\n```",
-                          diff_sha=sha)
+                          diff_sha=sha,
+                          started_at=codex_started, completed_at=codex_completed)
 
         # ── Claude ──
         sync_review_worktree(review, sha, log)
+        claude_started = notion.now_iso()
         rr = run_claude_with_retries(diff, task, review, claude_sys, log)
+        claude_completed = notion.now_iso()
         if not rr.parsed:
             notion.log_review(project_id=project_notion_id,
                               iteration=state["iteration"], agent="Claude",
                               verdict="Blocked", summary="claude unparseable",
-                              body_md=f"```\n{rr.stdout[:3000]}\n```", diff_sha=sha)
+                              body_md=f"```\n{rr.stdout[:3000]}\n```", diff_sha=sha,
+                              usage=rr.usage,
+                              started_at=claude_started, completed_at=claude_completed)
             checkpoint.save(feature, state)
             return 1
 
@@ -482,7 +490,9 @@ def run_loop(*, project: str, task: str, project_notion_id: str | None,
         verdict_map = {"approve": "Approved", "changes": "Changes requested", "block": "Blocked"}
         notion.log_review(project_id=project_notion_id, iteration=state["iteration"],
                           agent="Claude", verdict=verdict_map.get(verdict, "Comment"),
-                          summary=summary, body_md=body_md, diff_sha=sha)
+                          summary=summary, body_md=body_md, diff_sha=sha,
+                          usage=rr.usage,
+                          started_at=claude_started, completed_at=claude_completed)
 
         # Mirror review to Logseq vault for the graph view. Fire-and-forget;
         # vault writer no-ops when $INVISIBLE_VAULT is unset.
