@@ -15,6 +15,9 @@ overwritten on the next push.
 
 ### Features
 
+- **INV-01-01:** register /api/v1/calendar + fix registry dispatch return (e9c6435)
+- **INV-01-01:** lib/api/calendar.py — 3-source aggregator with SSRF guards (8a3d961)
+- **INV-01-01:** query_calendar_db helper in lib/notion.py (57a6261)
 - **01-01:** INVISIBLE_PTY_EXTRA_ORIGINS env var for sibling-workstream testing (ed21f33)
 - **01-02:** make Dashboard self-fetching with loading + error + fallback (89a3135)
 - **01-02:** add fetchProjects() helper to data.jsx for real /api/v1/projects (d0dd0f5)
@@ -50,6 +53,8 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-01-01:** [calendar] block in invisible.toml.example (0df89ff)
+- **ws/calendar-events:** plan phase 1 — calendar API + frontend wiring (4b877a1)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
 - **phase-01:** add security threat verification (16/16 closed) (f8daac6)
