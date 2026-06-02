@@ -12,9 +12,15 @@
 - [ ] **Phase 2: `invisible-server` as systemd service + nginx vhost** — dashboard daemon available remotely under HTTPS
 - [ ] **Phase 3: Folders/VPS column populated + Terminals ssh variant** — end-to-end VPS reach inside the app
 
-## Phase 1 Details — SSH ControlMaster
+## Phase Details
+
+### Phase 1: SSH ControlMaster + invisible.toml host
 
 **Goal:** A single `ssh srv982719` from inside the app reuses one TCP/TLS connection, multiplexed via ControlMaster. The 6 terminal panes can each open `ssh srv982719` without each one triggering a new auth handshake.
+
+**Depends on:** Nothing (foundation for Phases 2 and 3).
+
+**Requirements:** REQ-VPS-01 (see `.planning/REQUIREMENTS.md` — fall back to milestone-level REQ-04 if M2 requirements not yet enumerated).
 
 **Success criteria:**
 1. `~/.ssh/config` has a `Host srv982719` block with `ControlMaster auto`, `ControlPath ~/.ssh/cm-%r@%h:%p`, `ControlPersist 10m`.
@@ -26,9 +32,13 @@
 - [ ] 01-01: SSH config + invisible.toml wiring; document the ed25519 key generation in README
 - [ ] 01-02: `lib/api/tree_vps.py` rewritten to actually hit `srv982719` (currently returns 503 because `vps.host=""`)
 
-## Phase 2 Details — invisible-server systemd unit
+### Phase 2: invisible-server systemd unit + nginx vhost
 
 **Goal:** `invisible-server` runs as `systemd --user` on `srv982719`, behind nginx at `https://invisible.theprofitplatform.com.au`, with bearer-token auth.
+
+**Depends on:** Phase 1 (SSH multiplex used by deploy scripts).
+
+**Requirements:** REQ-VPS-02 (M2 deployment).
 
 **Success criteria:**
 1. `/srv/invisible/invisible-server.service` exists and is enabled (`systemctl --user enable invisible-server`).
@@ -40,9 +50,13 @@
 - [ ] 02-01: systemd unit + nginx config (deployed via ssh, NOT via the Mac repo)
 - [ ] 02-02: Cert via existing wildcard (`*.theprofitplatform.com.au` already exists per memory `vps_infra.md`)
 
-## Phase 3 Details — In-app VPS reach
+### Phase 3: In-app VPS reach (Folders + Terminals ssh variant)
 
 **Goal:** Folders page's VPS column shows real `srv982719` files. Terminals page panes can launch `ssh srv982719` and behave normally.
+
+**Depends on:** Phase 1 (SSH multiplex) and Phase 2 (remote dashboard daemon).
+
+**Requirements:** REQ-VPS-03 (M2 in-app reach).
 
 **Success criteria:**
 1. `GET /api/v1/tree/vps` returns the actual tree from `srv982719:/srv/<configured-paths>` (not the 503).
