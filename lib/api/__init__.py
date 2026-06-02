@@ -18,13 +18,15 @@ Contract:
 from __future__ import annotations
 
 from . import projects
+from . import relations
 
 # Path → handler callable. Sister workstreams add their entries below this line.
 ROUTES: dict = {
     "/api/v1/projects": projects.handle_projects,
+    "/api/v1/relations": relations.handle_relations,
 }
 
-__all__ = ["ROUTES", "projects"]
+__all__ = ["ROUTES", "projects", "relations"]
 """API submodules consumed by bin/invisible-dashboard.
 
 Each submodule is responsible for a single data source / capability. The

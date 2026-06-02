@@ -1,57 +1,110 @@
-// Relationships — Obsidian-style force-directed graph showing how projects,
-// notes, tools, and repos connect. Drag nodes around; edges animate.
+// Relationships — Obsidian-style graph rendering real nodes/edges
+// from GET /api/v1/relations on the dashboard daemon (port 8765).
+// Backend kinds {module, doc, project, endpoint} map to existing CSS
+// classes {.kind-repo, .kind-note, .kind-project, .kind-tool}.
 
-const { useState: useStateG, useRef: useRefG, useEffect: useEffectG } = React;
+const { useState: useStateG, useRef: useRefG, useEffect: useEffectG, useCallback: useCallbackG } = React;
 
-// Node graph data — projects in the center, surrounding nodes are notes/tools/repos
-const GRAPH = {
-  nodes: [
-    // Projects (center)
-    { id: "echo",    label: "Echo",    kind: "project", x: 380, y: 320, color: "#f5b343" },
-    { id: "lumen",   label: "Lumen",   kind: "project", x: 720, y: 280, color: "#5cc8ff" },
-    { id: "drift",   label: "Drift",   kind: "project", x: 540, y: 480, color: "#b794ff" },
-    { id: "rune",    label: "Rune",    kind: "project", x: 880, y: 480, color: "#f56fb1" },
-    { id: "atlas",   label: "Atlas",   kind: "project", x: 240, y: 540, color: "#4ade80" },
-    // Notes (Obsidian)
-    { id: "n-arch",     label: "Architecture",  kind: "note", x: 200, y: 200, color: "#8aa9ff" },
-    { id: "n-jitter",   label: "wave-jitter",   kind: "note", x: 480, y: 180, color: "#8aa9ff" },
-    { id: "n-rls",      label: "RLS walker",    kind: "note", x: 860, y: 160, color: "#8aa9ff" },
-    { id: "n-pairings", label: "Type pairings", kind: "note", x: 1020, y: 360, color: "#8aa9ff" },
-    { id: "n-daily",    label: "Daily 05/24",   kind: "note", x: 340, y: 660, color: "#8aa9ff" },
-    { id: "n-cost",     label: "Hetzner cost",  kind: "note", x: 120, y: 380, color: "#8aa9ff" },
-    // Tools / services
-    { id: "t-claude",  label: "Claude",   kind: "tool", x: 660, y: 80,  color: "#f5b343" },
-    { id: "t-whisper", label: "Whisper",  kind: "tool", x: 280, y: 80,  color: "#f5b343" },
-    { id: "t-stripe",  label: "Stripe",   kind: "tool", x: 80,  y: 280, color: "#f5b343" },
-    { id: "t-resend",  label: "Resend",   kind: "tool", x: 700, y: 620, color: "#f5b343" },
-    // Repos
-    { id: "r-echo",   label: "@you/echo",   kind: "repo", x: 460, y: 380, color: "#5ee0c8" },
-    { id: "r-lumen",  label: "@you/lumen",  kind: "repo", x: 800, y: 360, color: "#5ee0c8" },
-    { id: "r-drift",  label: "@you/drift",  kind: "repo", x: 580, y: 580, color: "#5ee0c8" },
-    { id: "r-ferry",  label: "@you/ferry",  kind: "repo", x: 60,  y: 600, color: "#5ee0c8" },
-  ],
-  edges: [
-    ["echo","n-arch"], ["echo","n-jitter"], ["echo","r-echo"],
-    ["echo","t-whisper"], ["echo","t-claude"], ["echo","t-stripe"],
-    ["lumen","n-rls"], ["lumen","r-lumen"], ["lumen","t-claude"],
-    ["drift","echo"], ["drift","t-resend"], ["drift","r-drift"],
-    ["rune","t-claude"], ["rune","n-pairings"],
-    ["atlas","n-cost"], ["atlas","r-ferry"],
-    ["echo","n-daily"], ["lumen","n-daily"], ["drift","n-daily"],
-    ["n-arch","n-jitter"],
-  ],
-};
+// ── Module-level constants ────────────────────────────────────────
+const RELATIONS_API_BASE = "http://127.0.0.1:8765";
 
-function RelationsGraph() {
-  const [nodes, setNodes] = useStateG(GRAPH.nodes);
+// Backend kind → existing CSS class suffix. The page DOES NOT edit
+// styles.css; it maps the new four-kind taxonomy onto the four mock
+// classes already in the stylesheet.
+const KIND_TO_CSS = { module: "repo", doc: "note", project: "project", endpoint: "tool" };
+
+// Per-kind color used to drive the `--n-c` CSS variable that the
+// color-mix rules on .graph-node read. Hex values mirror the dashboard's
+// deterministic palette so visual identity stays consistent.
+const KIND_COLOR = { module: "#5ee0c8", doc: "#8aa9ff", project: "#f5b343", endpoint: "#b794ff" };
+
+// Legend chip rows — [backendKind, label, color]. Drives both render
+// order and the filter-chip toggles in the legend.
+const KIND_LABELS = [
+  ["module",   "Modules",   "#5ee0c8"],
+  ["doc",      "Docs",      "#8aa9ff"],
+  ["project",  "Projects",  "#f5b343"],
+  ["endpoint", "Endpoints", "#b794ff"],
+];
+
+// ── Inline fetcher (single-use; kept out of data.jsx per Plan 01-02) ─
+async function fetchRelations(project) {
+  const url = RELATIONS_API_BASE + "/api/v1/relations" + (project ? ("?project=" + encodeURIComponent(project)) : "");
+  try {
+    const response = await fetch(url, { credentials: "omit" });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    return await response.json();
+  } catch (e) {
+    throw new Error("fetchRelations: " + (e.message || "network error"));
+  }
+}
+
+// ── Deterministic layout ──────────────────────────────────────────
+// Distribute nodes into concentric rings by kind. Pure function: same
+// input → same output, so reloads produce the same layout. The four
+// rings are project (innermost) → module → doc → endpoint (outermost).
+function layoutNodes(rawNodes, width, height) {
+  const W = width || 800;
+  const H = height || 600;
+  const cx = W / 2;
+  const cy = H / 2;
+  const RING_RADIUS = { project: 90, module: 180, doc: 260, endpoint: 340 };
+  const FALLBACK_RADIUS = 380;
+  const FALLBACK_COLOR = "#cccccc";
+
+  // Group nodes by kind, preserving incoming order within each ring so
+  // the layout is stable across reloads.
+  const buckets = { project: [], module: [], doc: [], endpoint: [], _other: [] };
+  for (const n of (rawNodes || [])) {
+    if (buckets[n.type]) buckets[n.type].push(n);
+    else buckets._other.push(n);
+  }
+
+  const out = [];
+  const placeRing = (members, radius) => {
+    const count = members.length;
+    if (!count) return;
+    for (let i = 0; i < count; i++) {
+      const n = members[i];
+      const angle = 2 * Math.PI * (i / count);
+      out.push({
+        ...n,
+        x: cx + radius * Math.cos(angle),
+        y: cy + radius * Math.sin(angle),
+        color: KIND_COLOR[n.type] || FALLBACK_COLOR,
+      });
+    }
+  };
+
+  placeRing(buckets.project,  RING_RADIUS.project);
+  placeRing(buckets.module,   RING_RADIUS.module);
+  placeRing(buckets.doc,      RING_RADIUS.doc);
+  placeRing(buckets.endpoint, RING_RADIUS.endpoint);
+  placeRing(buckets._other,   FALLBACK_RADIUS);
+
+  return out;
+}
+
+// ── Inner graph renderer (data already loaded) ────────────────────
+function RelationsGraph({ nodes: rawNodes, edges: rawEdges }) {
+  const [nodes, setNodes] = useStateG(() => layoutNodes(rawNodes, 800, 600));
   const [drag, setDrag] = useStateG(null);
   const [hover, setHover] = useStateG(null);
-  const [filter, setFilter] = useStateG({ project: true, note: true, tool: true, repo: true });
+  const [filter, setFilter] = useStateG({ module: true, doc: true, project: true, endpoint: true });
   const wrapRef = useRefG(null);
 
-  const visible = nodes.filter(n => filter[n.kind]);
+  // Re-lay out when the data prop identity changes. The fetch is mount-once
+  // today, but this is defensive against a future refresh button.
+  useEffectG(() => { setNodes(layoutNodes(rawNodes, 800, 600)); }, [rawNodes]);
+
+  // Reset handler: snap nodes back to the deterministic layout.
+  const resetLayout = useCallbackG(() => {
+    setNodes(layoutNodes(rawNodes, 800, 600));
+  }, [rawNodes]);
+
+  const visible = nodes.filter(n => filter[n.type]);
   const visibleIds = new Set(visible.map(n => n.id));
-  const visibleEdges = GRAPH.edges.filter(([a,b]) => visibleIds.has(a) && visibleIds.has(b));
+  const visibleEdges = (rawEdges || []).filter(e => visibleIds.has(e.from) && visibleIds.has(e.to));
 
   useEffectG(() => {
     if (!drag) return;
@@ -74,12 +127,13 @@ function RelationsGraph() {
 
   const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-  // Highlight edges and connected nodes when hovering
-  const isEdgeActive = ([a,b]) => hover && (a === hover || b === hover);
+  // Highlight edges and connected nodes when hovering. Edge shape is the
+  // new backend `{from, to, kind}` object — NOT the legacy `[a,b]` tuple.
+  const isEdgeActive = (e) => hover && (e.from === hover || e.to === hover);
   const isNodeActive = (id) => {
     if (!hover) return true;
     if (id === hover) return true;
-    return visibleEdges.some(([a,b]) => (a === hover && b === id) || (b === hover && a === id));
+    return visibleEdges.some(e => (e.from === hover && e.to === id) || (e.to === hover && e.from === id));
   };
 
   return (
@@ -91,10 +145,10 @@ function RelationsGraph() {
             <stop offset="100%" stopColor="rgba(255,255,255,0.05)"/>
           </linearGradient>
         </defs>
-        {visibleEdges.map(([a,b], i) => {
-          const na = nodeMap[a], nb = nodeMap[b];
+        {visibleEdges.map((e, i) => {
+          const na = nodeMap[e.from], nb = nodeMap[e.to];
           if (!na || !nb) return null;
-          const active = isEdgeActive([a,b]);
+          const active = isEdgeActive(e);
           return (
             <line
               key={i}
@@ -110,7 +164,7 @@ function RelationsGraph() {
       {visible.map(n => (
         <div
           key={n.id}
-          className={"graph-node kind-" + n.kind + (drag?.id === n.id ? " dragging" : "")}
+          className={"graph-node kind-" + (KIND_TO_CSS[n.type] || "repo") + (drag?.id === n.id ? " dragging" : "")}
           style={{
             left: n.x, top: n.y,
             "--n-c": n.color,
@@ -128,12 +182,7 @@ function RelationsGraph() {
 
       <div className="graph-legend">
         <div style={{ color: "var(--text-2)", marginBottom: 4 }}>FILTER</div>
-        {[
-          ["project", "Projects",  "#f5b343"],
-          ["note",    "Notes",     "#8aa9ff"],
-          ["tool",    "Tools",     "#f5b343"],
-          ["repo",    "Repos",     "#5ee0c8"],
-        ].map(([k, label, c]) => (
+        {KIND_LABELS.map(([k, label, c]) => (
           <div key={k} className="legend-row" style={{ cursor: "pointer", opacity: filter[k] ? 1 : 0.4 }}
                onClick={() => setFilter(f => ({ ...f, [k]: !f[k] }))}>
             <span className="legend-dot" style={{ color: c }}/>
@@ -143,30 +192,196 @@ function RelationsGraph() {
       </div>
 
       <div className="graph-controls">
-        <button className="icon-btn" title="Reset"><I.Sparkles size={14}/></button>
+        <button className="icon-btn" title="Reset" onClick={resetLayout}><I.Sparkles size={14}/></button>
+        {/* TODO: zoom support — currently a no-op so the visual control stays parked here for a follow-up plan */}
         <button className="icon-btn" title="Zoom in"><I.Plus size={14}/></button>
       </div>
     </div>
   );
 }
 
+// ── Outer self-fetching shell (loading / error / empty / loaded) ──
 function Relations() {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--pad-3)", height: "100%" }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <span className="chip accent"><span className="chip-dot"/>Obsidian vault · linked</span>
-        <span className="chip"><span className="chip-dot" style={{ color: "var(--c-cal)" }}/>18 nodes · 22 links</span>
-        <span className="muted mono" style={{ fontSize: 11, marginLeft: 8 }}>Drag nodes · hover to focus subgraph</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          <button className="btn">Force layout</button>
-          <button className="btn">Tag view</button>
+  // data: null while loading; {nodes, edges} on success.
+  // error: null on success; Error instance on failure (message already
+  // sanitized by fetchRelations — no URL / host path leakage).
+  const [data, setData] = useStateG(null);
+  const [error, setError] = useStateG(null);
+
+  // Stable loader so useEffect runs exactly once on mount and the Retry /
+  // re-fetch handlers can call the same closure.
+  const loadGraph = useCallbackG(() => {
+    setError(null);
+    setData(null);
+    fetchRelations("invisible").then(setData).catch(setError);
+  }, []);
+
+  useEffectG(() => { loadGraph(); }, [loadGraph]);
+
+  // Compact header strip used by all four branches (loading/error/empty/loaded).
+  // chipText / chipColor / dataLabel vary per branch.
+  const Header = ({ chipText, chipColor, dataLabel }) => (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <span className="chip accent"><span className="chip-dot"/>{dataLabel}</span>
+      <span className="chip"><span className="chip-dot" style={{ color: chipColor }}/>{chipText}</span>
+      <span className="muted mono" style={{ fontSize: 11, marginLeft: 8 }}>Drag nodes · hover to focus subgraph</span>
+      <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        <button className="btn">Force layout</button>
+        <button className="btn">Tag view</button>
+      </div>
+    </div>
+  );
+
+  // ── Loading branch ────────────────────────────────────────────
+  if (data === null && !error) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--pad-3)", height: "100%" }}>
+        <Header chipText="?? nodes · ?? links" chipColor="var(--c-cal)" dataLabel="Loading…"/>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="glass fade-in" style={{
+            padding: "var(--pad-5)",
+            maxWidth: 420,
+            textAlign: "center",
+            opacity: 0.85,
+            transition: "opacity .4s ease",
+          }}>
+            <div className="mono" style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}>
+              Fetching
+            </div>
+            <div style={{ fontSize: 16, color: "var(--text-2)" }}>
+              Loading graph…
+            </div>
+          </div>
         </div>
       </div>
+    );
+  }
+
+  // ── Error branch ──────────────────────────────────────────────
+  if (error) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--pad-3)", height: "100%" }}>
+        <Header chipText="error" chipColor="#ff7a7a" dataLabel="Error"/>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="glass fade-in" style={{
+            padding: "var(--pad-5)",
+            maxWidth: 480,
+            textAlign: "center",
+          }}>
+            <h2 style={{
+              margin: "0 0 8px",
+              fontSize: 18,
+              fontWeight: 600,
+              color: "var(--text-1)",
+            }}>
+              Couldn't load relations
+            </h2>
+            <div className="mono" style={{
+              fontSize: 12,
+              color: "var(--text-3)",
+              marginBottom: 18,
+              wordBreak: "break-word",
+            }}>
+              {error.message}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button
+                className="btn accent"
+                onClick={() => loadGraph()}
+                style={{ justifyContent: "center" }}
+              >
+                Retry
+              </button>
+              <button
+                className="btn"
+                onClick={() => { setError(null); setData({ nodes: [], edges: [] }); }}
+                style={{ justifyContent: "center" }}
+              >
+                Show empty
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Empty-graph branch ────────────────────────────────────────
+  if (!data.nodes || data.nodes.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--pad-3)", height: "100%" }}>
+        <Header chipText="0 nodes · 0 links · empty" chipColor="var(--text-3)" dataLabel="Empty"/>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="glass fade-in" style={{
+            padding: "var(--pad-5)",
+            maxWidth: 460,
+            textAlign: "center",
+            opacity: 0.85,
+          }}>
+            <div className="mono" style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}>
+              No data
+            </div>
+            <div style={{ fontSize: 16, color: "var(--text-2)" }}>
+              No relations yet — the API returned an empty graph for project 'invisible'.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Loaded branch ─────────────────────────────────────────────
+  const nodeCount = data.nodes.length;
+  const edgeCount = (data.edges || []).length;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--pad-3)", height: "100%" }}>
+      <Header
+        chipText={nodeCount + " nodes · " + edgeCount + " links"}
+        chipColor="var(--c-cal)"
+        dataLabel="API · /api/v1/relations"
+      />
       <div style={{ flex: 1, minHeight: 0 }}>
-        <RelationsGraph/>
+        <RelationsGraph nodes={data.nodes} edges={data.edges || []}/>
       </div>
     </div>
   );
 }
 
 window.Relations = Relations;
+
+// PLAN-01-02 verification log
+// ----------------------------------------------------------------------
+// Headless E2E checks (Task 2) — all PASS against live daemons:
+//
+//   Daemons:
+//     bin/invisible-dashboard --no-auth --port 8765   (Plan 01-01 backend)
+//     INVISIBLE_HOME="$(pwd)" bin/invisible-frontend  (serves THIS worktree's frontend/)
+//
+//   Step 3a  GET http://127.0.0.1:8090/                      → 200 OK
+//   Step 3b  index.html references pages/relations.jsx       → present (line 33)
+//   Step 4a  GET http://127.0.0.1:8090/pages/relations.jsx   → 200 OK
+//   Step 4b  Served bytes == on-disk bytes                   → diff -q clean
+//            (confirms INVISIBLE_HOME override served the worktree, not ~/.invisible)
+//   Step 5a  GET http://127.0.0.1:8765/api/v1/relations?project=invisible
+//                                                            → 200 OK · 98 nodes · 216 edges
+//   Step 5b  Access-Control-Allow-Origin header              → present (echoed Origin)
+//
+//   Plan 01-01 contract spot-checks (sanity — not modified here):
+//     ?project=../etc        → 400 {"error": "invalid_project"}
+//     ?project=nonexistent   → 200 {"nodes": [], "edges": []}   (drives Empty branch)
+//
+// Daemons torn down after the check; the next step (Task 3) is a human
+// browser-driven visual + interactive verify per the plan.
+// ----------------------------------------------------------------------
