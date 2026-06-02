@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: `/api/v1/tools` CRUD + Tools page wired**
+- [x] **Phase 1: `/api/v1/tools` CRUD + Tools page wired** (completed 2026-06-02)
 
 ## Phase Details
 
@@ -43,7 +43,7 @@ database. Lock-free single-writer per project.
 
 **Plans**: 2 plans
 - [x] 01-01-PLAN.md — Backend `lib/api/tools.py` (GET/PUT/DELETE) + atomic lock-free write + daemon wiring (do_PUT/do_DELETE, explicit GET route) + central CORS fix (single-source ACAO, collapsed do_OPTIONS). Wave 1. [D-01..D-12]
-- [ ] 01-02-PLAN.md — Frontend `frontend/pages/tools.jsx` fetch-on-switch + 1s-debounced autosave + status footer + `TOOL_WORKFLOWS` mock removal + `.gitignore`. Wave 2, depends_on 01-01. [D-13..D-16]
+- [x] 01-02-PLAN.md — Frontend `frontend/pages/tools.jsx` fetch-on-switch + 1s-debounced autosave + status footer + `TOOL_WORKFLOWS` mock removal + `.gitignore`. Wave 2, depends_on 01-01. [D-13..D-16]
 
 ## Files this workstream OWNS
 
