@@ -286,17 +286,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
         self.send_header("Cache-Control", "no-store")
-        # Loopback-only CORS: echo the Origin header back ONLY if it is
-        # 127.0.0.1 or localhost. Never `*` — even with --no-auth the API
-        # must stay closed to web pages on other origins.
-        origin = self.headers.get("Origin", "")
-        if (origin.startswith("http://127.0.0.1:")
-                or origin.startswith("http://localhost:")):
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
         # CORS headers (ACAO/ACAM/ACAH) are emitted globally by the
-        # end_headers() override above — adding them here would produce
-        # duplicate headers which the CORS spec rejects.
+        # end_headers() override above. Previously this method also echoed
+        # the Origin back for loopback callers, producing TWO ACAO headers
+        # ("*" + "<origin>") on the same response — the browser rejected
+        # those with "header contains multiple values, but only one is
+        # allowed" (CORS spec) and the Calendar / Dashboard / Analytics
+        # fetches all failed cross-origin from frontend :8090 → API :8765.
+        # Trust the global ACAO=* (safe because we never set
+        # Allow-Credentials and --no-auth is pinned to 127.0.0.1 at startup).
         self.end_headers()
         self.wfile.write(b)
 
