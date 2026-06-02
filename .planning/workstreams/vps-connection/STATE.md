@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: M2 — VPS hardening
-current_phase: 2
-current_plan: 1
-status: executing
-stopped_at: N/A
-last_updated: "2026-06-02T05:30:00.000Z"
+current_phase: 2 (cursor advanced; not yet executing)
+current_plan: Phase 2 Plan 01 (not started)
+status: "Phase 1 shipped — PR #12"
+stopped_at: Phase 1 complete; ready for Phase 2 Plan 01 (systemd unit + nginx config)
+last_updated: "2026-06-02T07:47:08.883Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 3
@@ -30,7 +30,7 @@ See: .planning/workstreams/vps-connection/ROADMAP.md
 
 Phase: 1 (SSH ControlMaster + invisible.toml host) — **COMPLETE**
 Next: Phase 2 (invisible-server systemd unit + nginx vhost) — not started
-**Status:** Phase 1 done; tree_vps walker verified end-to-end against srv982719 (real bug found and fixed in 01-02)
+**Status:** Phase 1 shipped — PR #12
 **Current Phase:** 2 (cursor advanced; not yet executing)
 **Last Activity:** 2026-06-02
 **Last Activity Description:** Completed Plan 01-02 — tree_vps verify-and-harden. Live integration surfaced a glob-quoting bug (`*/.git*` was being expanded by remote bash against /home/avi). 13-line surgical fix at _ssh_argv boundary using shlex.quote. 18 hermetic + 5 live integration tests; full Plan 01-02 acceptance green.
