@@ -6,7 +6,7 @@
 // relying on the daemon's loopback-only single-ACAO CORS posture). On project switch
 // we GET /api/v1/tools?project=<id>; canvas edits (add/drag-end/wire) autosave via a
 // 1s-debounced PUT. The pending save is cancelled on project switch so a save for
-// project A can never land on B. The static TOOL_WORKFLOWS mock is gone.
+// project A can never land on B. The old static per-project mock is gone.
 
 const { useState: useStateTL, useRef: useRefTL, useEffect: useEffectTL, useMemo: useMemoTL } = React;
 
@@ -248,8 +248,9 @@ function ProjectPicker({ projects, onPick }) {
       </div>
       <div className="proj-picker-grid">
         {projects.map(p => {
-          const wf = TOOL_WORKFLOWS[p.id];
-          const has = !!wf;
+          // D-15: the per-project workflow mock is gone, so the picker no longer knows
+          // node/wire counts up-front. Show a neutral label; counts load when the project
+          // is opened (a per-card fetch would be N requests on the grid — out of scope).
           return (
             <button
               key={p.id}
@@ -261,7 +262,7 @@ function ProjectPicker({ projects, onPick }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
                 <div className="mono" style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>
-                  {has ? `${wf.nodes.length} nodes · ${wf.edges.length} wires` : "no workflow yet"}
+                  open to view
                 </div>
               </div>
               <I.ChevronR size={14} style={{ color: "var(--p-c)" }}/>
@@ -380,7 +381,7 @@ function Tools({ projects, selectedProject, setSelectedProject }) {
   }
 
   const project = projects.find(p => p.id === projId);
-  // wf.name is derived from the project now that the TOOL_WORKFLOWS mock is gone (D-15);
+  // wf.name is derived from the project now that the static mock is gone (D-15);
   // nodes/edges come from the fetched workflow above (D-13).
   const wfName = `${project.name} · workflow`;
 
