@@ -15,6 +15,7 @@ overwritten on the next push.
 
 ### Features
 
+- **tauri-windows:** add MSI bundle target + WiX en-US config (32c9cea)
 - **INV-02:** tauri shell with tray + 5 commands + SSE bridge (e84209f)
 - **INV-02:** SSE bridge with polling fallback + frontend-vite/src/lib/tauri.js (cd208c2)
 - **INV-02:** system tray and close-to-hide window event (20671e8)
@@ -48,6 +49,7 @@ overwritten on the next push.
 
 ### Bug Fixes
 
+- **tauri-windows:** switch from MSI to NSIS — Tauri 2.x MSI bundler is host-Windows-only (265d998)
 - **tauri:** also update tauri.conf.json (companion to 0d56203 plan-doc fix) (27d4de0)
 - **tauri:** beforeDevCommand cwd is project root, not src-tauri/ (9b41a50)
 - **01-03:** TerminalPane name + 6-pane grid layout (12dc319)
@@ -57,6 +59,8 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-01:** PHASE-VERIFICATION + ROADMAP NSIS switch (b87c4ee)
+- update CHANGELOG (rebase) (af17141)
 - **INV-02:** record Task 6 self-check in SUMMARY (e8294bb)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
