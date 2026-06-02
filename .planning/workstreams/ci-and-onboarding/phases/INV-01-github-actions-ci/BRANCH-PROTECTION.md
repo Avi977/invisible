@@ -1,5 +1,12 @@
 # Branch Protection & Security-Review Runbook — `main` (Avi977/invisible)
 
+> ⚠️ **SUPERSEDED (2026-06-02):** PR #3 / the `claude-code-security-review` action was **merged then reverted off `main`** (revert commit `23de0da`). That action only accepts an **Anthropic API key** (`claude-api-key`; no OAuth/subscription input — that's the *separate* `anthropics/claude-code-action`), which conflicts with `invisible`'s design: a **Claude Code CLI wrapper** on Max-plan subscription auth, **no API keys**. Therefore:
+> - **D-06 is VOID** — do NOT set `CLAUDE_API_KEY`, do NOT register a `Claude security review` check. The action no longer exists on `main`.
+> - **D-07 still applies**, but the required contexts are **only** `lint`, `test`, `import-smoke` — drop every `Claude security review` reference below.
+> - Semantic security review now runs **locally via the `claude` CLI** (`/gsd:secure-phase`, `/security-review`) — free under Max, same auth as the rest of the app.
+>
+> The security-review sections below are retained for history only.
+
 **Status:** DOCUMENTED, NOT EXECUTED.
 **Why this file exists:** Phase 1 (INV-01-github-actions-ci) delivers a green CI
 pipeline (`ci.yml` — jobs `lint`, `test`, `import-smoke`) and resolves the

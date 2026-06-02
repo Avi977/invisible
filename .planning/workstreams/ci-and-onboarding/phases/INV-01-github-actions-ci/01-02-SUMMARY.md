@@ -89,7 +89,10 @@ None — plan executed exactly as written for Tasks 1-2. No deviation rules (1-3
 1. **After PR #3 is merged (Task 3 approval):** `gh secret set CLAUDE_API_KEY --body "$ANTHROPIC_API_KEY" --repo Avi977/invisible`, then trigger the security-review workflow once and register the `Claude security review` required check (D-06).
 2. **Branch protection (D-07):** `gh api -X PUT repos/Avi977/invisible/branches/main/protection` with contexts `lint`, `test`, `import-smoke`, `Claude security review` — owner may lack `administration` permission; recorded, not run.
 
-## Task 3 — RESOLVED: PR #3 MERGED (human-approved)
+## Task 3 — PR #3 MERGED then REVERTED off main
+
+> **2026-06-02 update:** PR #3 was reverted off `main` (revert commit `23de0da`). `claude-code-security-review` only accepts an Anthropic **API key**, which conflicts with `invisible`'s no-API-key (Claude Code CLI) design — so it was removed at the user's direction immediately after merge. Semantic security review now runs locally via the `claude` CLI. The merge record below is retained for history.
+
 - **Decision:** the human approved the merge at the blocking checkpoint ("Merge PR #3 now (squash)").
 - **Executed by the orchestrator** (the `SendMessage` resume path was unavailable): re-verified the action SHA pin intact one final time (`@0c6a49f1fa56a1d472575da86a94dbc1edb78eda`, not `@main`/a tag) with PR #3 `OPEN`/`MERGEABLE`/`CLEAN`, then ran `gh pr merge 3 --squash`.
 - **Result:** PR #3 → state `MERGED` at `2026-06-02T04:35:41Z`; squash commit `692dc52199a7971c65b25fb99b916ff40159fc00`; `.github/workflows/security-review.yml` confirmed present on `main` via `gh api`.
