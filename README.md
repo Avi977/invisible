@@ -44,6 +44,36 @@ The shell exposes 5 Rust `#[tauri::command]` wrappers around the existing CLI su
 
 ---
 
+## Installation (macOS)
+
+The Tauri shell ships **unsigned** for now (no Apple Developer ID — issue
+tracked in the workstream ROADMAP). macOS Gatekeeper will refuse to open
+the app on first launch with a "cannot be opened because the developer
+cannot be verified" dialog. Pick one of the two unblock paths below.
+
+**Path A — right-click open (recommended for non-technical users):**
+
+1. Drag `Invisible.app` from the `.dmg` into `/Applications`.
+2. In Finder, **right-click** `Invisible.app` -> **Open**.
+3. In the dialog that appears, click **Open** again.
+4. macOS remembers the decision — subsequent launches work normally.
+
+**Path B — terminal (faster if you already have Terminal open):**
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Invisible.app
+```
+
+This strips the quarantine extended attribute that Gatekeeper added when
+the download landed. **Only run this on apps you downloaded yourself**
+from a source you trust — never apply it as a blanket "fix all the
+warnings" command.
+
+See [Apple's Gatekeeper docs](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)
+for the official walkthrough.
+
+---
+
 ## Architecture
 
 ```

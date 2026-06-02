@@ -35,8 +35,9 @@ checkpoints/
 .invisible-checkpoint.json
 .invisible-state/
 # per-machine tool-workflow state (daemon-created under the repo root when run
-# with INVISIBLE_HOME=$(pwd) inside a worktree — see INV-01 D-16)
-workflows/
+# with INVISIBLE_HOME=$(pwd) inside a worktree — see INV-01 D-16).
+# Anchored to repo root so it does NOT match .github/workflows/.
+/workflows/
 
 # ── GSD per-worktree state ─────────────────────────────────────────────
 # Active workstream is per-worktree, not shared. Each git worktree picks
