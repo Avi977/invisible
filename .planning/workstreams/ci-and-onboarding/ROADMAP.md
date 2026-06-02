@@ -6,7 +6,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: GitHub Actions CI** — lint + test + import-smoke on push/PR
+- [x] **Phase 1: GitHub Actions CI** — lint + test + import-smoke on push/PR (completed 2026-06-02)
 - [ ] **Phase 2: First-run wizard** — Tauri-side onboarding (Infisical creds, VPS host, first project)
 - [ ] **Phase 3: `invisible-doctor` polish** — fresh-machine setup story
 
@@ -26,9 +26,9 @@ job.
 4. Workflow runs on `push` (any branch) and `pull_request` targeting `main`.
 5. Required-check on the `main` branch in GitHub branch-protection (you may not have permissions; document the manual setting).
 
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 - [x] 01-01-PLAN.md — Create `.github/workflows/ci.yml` (lint + test + import-smoke jobs), `ruff.toml`, and pytest config (`pyproject.toml`). Covers D-01..D-05.
-- [ ] 01-02-PLAN.md — Verify all 3 jobs green on GitHub, add README CI badge, document branch-protection (BRANCH-PROTECTION.md), and merge PR #3 behind a confirm. Covers D-03, D-06, D-07.
+- [x] 01-02-PLAN.md — Verify all 3 jobs green on GitHub, add README CI badge, document branch-protection (BRANCH-PROTECTION.md), and merge PR #3 behind a confirm. Covers D-03, D-06, D-07.
 
 ### Phase 2: First-run wizard
 

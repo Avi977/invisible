@@ -12,7 +12,7 @@ provides:
   - Verified green CI run on GitHub for ws/ci-and-onboarding — all three jobs (lint, test, import-smoke) conclusion=success (D-03)
   - README CI status badge under the # invisible title (light edit)
   - BRANCH-PROTECTION.md runbook — documented D-07 required-check gh api call (contexts lint/test/import-smoke + "Claude security review") and D-06 PR #3 post-merge steps (CLAUDE_API_KEY secret, register check)
-affects: [Phase-2 first-run-wizard (CI now gates its PRs once protection is set), PR #3 merge (awaiting human approval — Task 3), branch-protection-on-main (documented manual step, owner-gated)]
+affects: [Phase-2 first-run-wizard (CI now gates its PRs once protection is set), PR #3 merge (MERGED — squash 692dc52, human-approved), branch-protection-on-main (documented manual step, owner-gated)]
 
 # Tech tracking
 tech-stack:
@@ -49,7 +49,7 @@ completed: 2026-06-01
 - **Duration:** ~12 min
 - **Started:** 2026-06-02T04:27:24Z
 - **Completed:** 2026-06-01 (Tasks 1-2; Task 3 paused at checkpoint)
-- **Tasks:** 2 of 3 complete (Task 3 = blocking human-verify checkpoint, awaiting approval)
+- **Tasks:** 3 of 3 complete (Task 3 — PR #3 merge approved by the human; executed by the orchestrator)
 - **Files modified:** 2 (1 created, 1 light-edited)
 
 ## Accomplishments
@@ -89,12 +89,12 @@ None — plan executed exactly as written for Tasks 1-2. No deviation rules (1-3
 1. **After PR #3 is merged (Task 3 approval):** `gh secret set CLAUDE_API_KEY --body "$ANTHROPIC_API_KEY" --repo Avi977/invisible`, then trigger the security-review workflow once and register the `Claude security review` required check (D-06).
 2. **Branch protection (D-07):** `gh api -X PUT repos/Avi977/invisible/branches/main/protection` with contexts `lint`, `test`, `import-smoke`, `Claude security review` — owner may lack `administration` permission; recorded, not run.
 
-## Awaiting Human Decision (Task 3 — BLOCKING)
-- **Action gated:** `gh pr merge 3 --squash` (writes to `main` of the public repo `Avi977/invisible`).
-- **PR #3 state:** OPEN, `MERGEABLE`/`CLEAN`, base `main`, head SHA `1ff5976`; adds only `.github/workflows/security-review.yml` + `.github/SECURITY-REVIEW.md`; action SHA-pinned to `@0c6a49f1fa56a1d472575da86a94dbc1edb78eda` (verified intact).
-- **CI status to confirm before approving:** run 26798471337 / SHA `dec86a2` → completed/success (lint, test, import-smoke all green).
-- **Resume signals:** "merge approved" → executor runs `gh pr merge 3`; "skip merge" → leave PR #3 OPEN, record reason; or describe changes needed first.
-- **No competing `security-review.yml` was authored** — PR #3 remains the single source of truth (D-06).
+## Task 3 — RESOLVED: PR #3 MERGED (human-approved)
+- **Decision:** the human approved the merge at the blocking checkpoint ("Merge PR #3 now (squash)").
+- **Executed by the orchestrator** (the `SendMessage` resume path was unavailable): re-verified the action SHA pin intact one final time (`@0c6a49f1fa56a1d472575da86a94dbc1edb78eda`, not `@main`/a tag) with PR #3 `OPEN`/`MERGEABLE`/`CLEAN`, then ran `gh pr merge 3 --squash`.
+- **Result:** PR #3 → state `MERGED` at `2026-06-02T04:35:41Z`; squash commit `692dc52199a7971c65b25fb99b916ff40159fc00`; `.github/workflows/security-review.yml` confirmed present on `main` via `gh api`.
+- **No competing `security-review.yml` was authored** — PR #3 remained the single source of truth (D-06).
+- **Still owner-gated (documented, NOT executed):** set the `CLAUDE_API_KEY` secret, register the `Claude security review` required check, and apply branch protection — all in BRANCH-PROTECTION.md. Until the secret is set, the security-review check will error (non-blocking) on PRs into `main`.
 
 ## Next Phase Readiness
 - CI is proven green on GitHub for ws/ci-and-onboarding; the badge is live; the branch-protection + PR #3 runbook is in place. Once the human approves the Task-3 merge and the two BRANCH-PROTECTION.md steps are done, Phase 1's success criteria (incl. criterion 5 / D-07) are fully satisfied.
@@ -111,4 +111,4 @@ None — plan executed exactly as written for Tasks 1-2. No deviation rules (1-3
 
 ---
 *Phase: INV-01-github-actions-ci*
-*Completed: 2026-06-01 (Tasks 1-2; Task 3 awaiting human approval at blocking checkpoint)*
+*Completed: 2026-06-01 (Tasks 1-2); Task 3 (PR #3 merge) human-approved + merged 2026-06-02 (squash 692dc52)*
