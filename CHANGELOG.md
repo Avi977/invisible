@@ -50,6 +50,10 @@ overwritten on the next push.
 
 ### Documentation
 
+- **INV-01:** mark plan 01-01 complete (CI pipeline files landed) (0647f68)
+- **INV-01-01:** add execution summary for CI pipeline plan (dd0181d)
+- **INV-01:** add phase context, patterns, and workstream state (aa51236)
+- **INV-01:** create phase plan for GitHub Actions CI (7f8b21a)
 - **planning:** preserve 4 stranded sister-session handoff docs (7eb9e48)
 - **planning:** add CONTEXT.md handoff after M1 partial ship (f4efbeb)
 - **phase-01:** add security threat verification (16/16 closed) (f8daac6)
@@ -97,8 +101,13 @@ overwritten on the next push.
 
 - **frontend-vite:** production dist/ verified Tauri-ready (f0d692b)
 
+### CI
+
+- **INV-01-01:** add CI pipeline (lint, test, import-smoke) (e2ec1a6)
+
 ### Chores
 
+- **INV-01-01:** add lenient ruff + pytest config for CI (5e88b4e)
 - **gitignore:** untrack START_HERE.md (per-worktree scaffold) (d5c369b)
 - **planning:** untrack .planning/active-workstream (989c449)
 
