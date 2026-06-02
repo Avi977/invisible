@@ -40,6 +40,13 @@ checkpoints/
 # its own via `gsd-sdk query workstream.set <name>`.
 .planning/active-workstream
 
+# START_HERE.md is a per-worktree session-bootstrap scaffold (e.g. created
+# by the worktree-setup flow in invisible-ws/). It is useful only when
+# opening a worktree, not on main. Tracking it here would mean every
+# session's local scaffolding leaks into PRs.
+START_HERE.md
+START_HERE.*.local.md
+
 # ── OS / editor ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
