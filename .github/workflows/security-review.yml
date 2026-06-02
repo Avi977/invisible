@@ -1,0 +1,47 @@
+name: Security Review
+
+# Required check for every PR into main. Runs anthropics/claude-code-security-review
+# against the diff and posts findings as PR comments. Required-status-check
+# enforcement is configured via branch protection (see SECURITY.md if present, or
+# the PR that introduced this workflow).
+#
+# Manual re-run: workflow_dispatch from the Actions tab on the PR's head ref.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write     # post comments with findings
+  contents: read           # read the diff
+  issues: write            # the action posts a summary issue on some configurations
+
+# Cancel old runs when a new commit is pushed to the same PR — saves Claude API spend.
+concurrency:
+  group: security-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    name: Claude security review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30   # action's own claudecode-timeout defaults to 20m
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      # Pinned to commit SHA (0c6a49f, 2026-02-11) per GitHub Actions security
+      # best practice — third-party action refs are untrusted. Bump intentionally.
+      - name: Run claude-code-security-review
+        uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda
+        with:
+          claude-api-key: ${{ secrets.CLAUDE_API_KEY }}
+          comment-pr: true
+          upload-results: true
+          # Skip planning/intel directories — security review of plain markdown
+          # planning artifacts adds noise + cost without finding code-level bugs.
+          exclude-directories: .planning,frontend-vite/node_modules,src-tauri/target
