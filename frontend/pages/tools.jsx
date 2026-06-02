@@ -1,7 +1,42 @@
 // Tools — n8n-style node graph, scoped per project.
 // Flow: choose project → see that project's workflow → drag/drop new tools onto canvas.
+//
+// Wiring (INV-01 / D-13..D-16): each project's workflow is loaded from and saved
+// to the dashboard daemon on :8765 (the frontend is served from :8090 — cross-origin,
+// relying on the daemon's loopback-only single-ACAO CORS posture). On project switch
+// we GET /api/v1/tools?project=<id>; canvas edits (add/drag-end/wire) autosave via a
+// 1s-debounced PUT. The pending save is cancelled on project switch so a save for
+// project A can never land on B. The static TOOL_WORKFLOWS mock is gone.
 
 const { useState: useStateTL, useRef: useRefTL, useEffect: useEffectTL, useMemo: useMemoTL } = React;
+
+// The dashboard daemon. Same hardcoded base as folders.jsx (a future Vite-shell
+// plan will move this into shared config / env injection).
+const API_BASE = "http://127.0.0.1:8765";
+
+// Token discovery mirrors folders.jsx: URL ?token= first (bookmarkable from phone),
+// then window.INVISIBLE_TOKEN (future bootstrap injection). When the daemon runs
+// with --no-auth there is no token and the Authorization header is omitted.
+function getToken() {
+  const u = new URLSearchParams(window.location.search).get("token");
+  if (u) return u;
+  if (window.INVISIBLE_TOKEN) return window.INVISIBLE_TOKEN;
+  return "";
+}
+
+// Relative-time for the autosave footer ("saved Ns ago"). Kept tiny and dependency-free.
+function relTime(iso) {
+  if (!iso) return "";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 5) return "just now";
+  if (secs < 60) return secs + "s ago";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return mins + "m ago";
+  const hrs = Math.round(mins / 60);
+  return hrs + "h ago";
+}
 
 const PALETTE = [
   { kind: "ai",       label: "AI",         items: [
@@ -30,7 +65,7 @@ const PALETTE = [
 
 const NODE_W = 180;
 
-function ToolsCanvas({ initialNodes, initialEdges, accentC }) {
+function ToolsCanvas({ initialNodes, initialEdges, accentC, onChange }) {
   const [nodes, setNodes] = useStateTL(initialNodes);
   const [edges, setEdges] = useStateTL(initialEdges);
   const [drag, setDrag] = useStateTL(null);
@@ -38,13 +73,26 @@ function ToolsCanvas({ initialNodes, initialEdges, accentC }) {
   const [mousePos, setMousePos] = useStateTL({ x: 0, y: 0 });
   const canvasRef = useRefTL(null);
   const [selected, setSelected] = useStateTL(null);
-
-  // Reset when project changes
+  // Reset when project changes (and on async load: the parent feeds the fetched
+  // workflow in as new initialNodes/initialEdges props, which lands here).
   useEffectTL(() => {
     setNodes(initialNodes);
     setEdges(initialEdges);
     setSelected(null);
   }, [initialNodes, initialEdges]);
+
+  // Autosave change-notification: route ALL canvas mutations (onDrop, drag-end via
+  // the window `up` handler, endConnect add-edge, removeSelected) through a single
+  // [nodes, edges] effect so the parent can debounce-save (D-14). CRITICAL: we must
+  // NOT fire onChange for a *seed*. A seed is `setNodes(initialNodes)` from the effect
+  // above, so right after it `nodes === initialNodes` by reference; genuine user edits
+  // always build a NEW array (`setNodes(ns => [...ns, ...])`), so reference-identity to
+  // the current props cleanly distinguishes "freshly-loaded workflow" from "user edit".
+  // This stops the async GET from echoing the loaded workflow straight back as a PUT.
+  useEffectTL(() => {
+    if (nodes === initialNodes && edges === initialEdges) return;
+    onChange && onChange(nodes, edges);
+  }, [nodes, edges]);
 
   useEffectTL(() => {
     const move = (e) => {
@@ -228,12 +276,113 @@ function ProjectPicker({ projects, onPick }) {
 function Tools({ projects, selectedProject, setSelectedProject }) {
   const projId = selectedProject && projects.some(p => p.id === selectedProject) ? selectedProject : null;
 
+  // Loaded workflow for the current project (D-13). Seeded empty; replaced by the
+  // GET /api/v1/tools?project=<id> response (which is {nodes:[],edges:[],updated_at:null}
+  // for a never-saved project). loading/error mirror folders.jsx.
+  const [wf, setWf] = useStateTL({ nodes: [], edges: [], updated_at: null });
+  const [loading, setLoading] = useStateTL(false);
+  const [loadError, setLoadError] = useStateTL(null);
+
+  // Autosave plumbing (D-14):
+  //  - timer: the 1s debounce handle, cleared on every change and on project switch.
+  //  - projIdRef: the target project captured for the in-flight PUT. Read INSIDE the
+  //    setTimeout callback so the ?project= query and the body always name the same
+  //    project even if a render is mid-flight (closes the last cross-project-save race;
+  //    cancel-on-switch below is the primary guard).
+  //  - saveState/savedAt: drive the footer (idle | saving | saved | error).
+  const timer = useRefTL(null);
+  const projIdRef = useRefTL(projId);
+  const [saveState, setSaveState] = useStateTL("idle");
+  const [savedAt, setSavedAt] = useStateTL(null);
+
+  // Keep projIdRef in lockstep with the active project so the debounced PUT closure
+  // always sees the current target (belt-and-suspenders with cancel-on-switch).
+  useEffectTL(() => { projIdRef.current = projId; }, [projId]);
+
+  // Load on switch (D-13). Keyed on [projId]; a `cancelled` flag + cleanup ensure a
+  // slow A-fetch can never paint after switching to B (exact folders.jsx mechanism).
+  // The SAME cleanup clearTimeout()s any pending autosave so a queued save for A is
+  // cancelled before B loads — a save for A must never land on B (D-14 CRITICAL).
+  useEffectTL(() => {
+    if (!projId) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+
+    const token = getToken();
+    const headers = token ? { Authorization: "Bearer " + token } : {};
+    const qs = "?project=" + encodeURIComponent(projId);
+
+    fetch(API_BASE + "/api/v1/tools" + qs, { headers })
+      .then((r) => r.json().then((body) => ({ ok: r.ok, status: r.status, body })))
+      .then(({ ok, status, body }) => {
+        if (cancelled) return;
+        if (!ok) {
+          setLoadError((body && body.error) || ("HTTP " + status));
+          setWf({ nodes: [], edges: [], updated_at: null });
+          return;
+        }
+        setWf({
+          nodes: Array.isArray(body.nodes) ? body.nodes : [],
+          edges: Array.isArray(body.edges) ? body.edges : [],
+          updated_at: body.updated_at || null,
+        });
+        // A fresh load resets the save indicator; an existing updated_at seeds "saved".
+        setSavedAt(body.updated_at || null);
+        setSaveState(body.updated_at ? "saved" : "idle");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(String(err));
+        setWf({ nodes: [], edges: [], updated_at: null });
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => {
+      cancelled = true;
+      // Cancel any pending autosave for the project we are leaving (D-14 CRITICAL).
+      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    };
+  }, [projId]);
+
+  // Debounced autosave (D-14): every canvas change resets the 1s timer; when it fires
+  // we PUT {nodes,edges} to the project captured at fire-time (projIdRef.current).
+  const handleCanvasChange = (nodes, edges) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      const target = projIdRef.current;
+      if (!target) return;
+      const token = getToken();
+      const headers = token ? { Authorization: "Bearer " + token } : {};
+      setSaveState("saving");
+      fetch(API_BASE + "/api/v1/tools?project=" + encodeURIComponent(target), {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ nodes, edges }),
+      })
+        .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
+        .then(({ ok, body }) => {
+          // Ignore a response that resolved after the user switched away.
+          if (projIdRef.current !== target) return;
+          if (!ok) { setSaveState("error"); return; }
+          setSavedAt(body.updated_at || new Date().toISOString());
+          setSaveState("saved");
+        })
+        .catch(() => {
+          if (projIdRef.current !== target) return;
+          setSaveState("error");
+        });
+    }, 1000);
+  };
+
   if (!projId) {
     return <ProjectPicker projects={projects} onPick={setSelectedProject}/>;
   }
 
   const project = projects.find(p => p.id === projId);
-  const wf = TOOL_WORKFLOWS[projId] || { name: `${project.name} · new workflow`, nodes: [], edges: [] };
+  // wf.name is derived from the project now that the TOOL_WORKFLOWS mock is gone (D-15);
+  // nodes/edges come from the fetched workflow above (D-13).
+  const wfName = `${project.name} · workflow`;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--pad-3)", height: "100%" }}>
@@ -259,7 +408,26 @@ function Tools({ projects, selectedProject, setSelectedProject }) {
           </button>
         ))}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <span className="chip mono" style={{ fontSize: 10 }}>{wf.name}</span>
+          {/* Autosave status footer (D-14): saving… while a PUT is in flight,
+              "saved Ns ago" from the stored updated_at, or "save failed" on error. */}
+          {saveState === "saving" && (
+            <span className="chip mono" style={{ fontSize: 10, color: "var(--text-3)" }}>saving…</span>
+          )}
+          {saveState === "saved" && (
+            <span className="chip mono" style={{ fontSize: 10, color: "var(--text-3)" }}>
+              saved{savedAt ? ` ${relTime(savedAt)}` : ""}
+            </span>
+          )}
+          {saveState === "error" && (
+            <span className="chip mono" style={{ fontSize: 10, color: "var(--c-danger, #f56fb1)" }}>save failed</span>
+          )}
+          {loading && (
+            <span className="chip mono" style={{ fontSize: 10, color: "var(--text-3)" }}>loading…</span>
+          )}
+          {loadError && !loading && (
+            <span className="chip mono" style={{ fontSize: 10, color: "var(--c-danger, #f56fb1)" }}>load failed</span>
+          )}
+          <span className="chip mono" style={{ fontSize: 10 }}>{wfName}</span>
         </div>
       </div>
 
@@ -292,10 +460,11 @@ function Tools({ projects, selectedProject, setSelectedProject }) {
           ))}
         </div>
         <ToolsCanvas
-          key={projId /* force fresh canvas per project */}
+          key={projId /* force fresh canvas per project — also resets the seed guard */}
           initialNodes={wf.nodes}
           initialEdges={wf.edges}
           accentC={project.color}
+          onChange={handleCanvasChange}
         />
       </div>
     </div>
