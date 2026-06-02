@@ -360,3 +360,28 @@ function Relations() {
 }
 
 window.Relations = Relations;
+
+// PLAN-01-02 verification log
+// ----------------------------------------------------------------------
+// Headless E2E checks (Task 2) — all PASS against live daemons:
+//
+//   Daemons:
+//     bin/invisible-dashboard --no-auth --port 8765   (Plan 01-01 backend)
+//     INVISIBLE_HOME="$(pwd)" bin/invisible-frontend  (serves THIS worktree's frontend/)
+//
+//   Step 3a  GET http://127.0.0.1:8090/                      → 200 OK
+//   Step 3b  index.html references pages/relations.jsx       → present (line 33)
+//   Step 4a  GET http://127.0.0.1:8090/pages/relations.jsx   → 200 OK
+//   Step 4b  Served bytes == on-disk bytes                   → diff -q clean
+//            (confirms INVISIBLE_HOME override served the worktree, not ~/.invisible)
+//   Step 5a  GET http://127.0.0.1:8765/api/v1/relations?project=invisible
+//                                                            → 200 OK · 98 nodes · 216 edges
+//   Step 5b  Access-Control-Allow-Origin header              → present (echoed Origin)
+//
+//   Plan 01-01 contract spot-checks (sanity — not modified here):
+//     ?project=../etc        → 400 {"error": "invalid_project"}
+//     ?project=nonexistent   → 200 {"nodes": [], "edges": []}   (drives Empty branch)
+//
+// Daemons torn down after the check; the next step (Task 3) is a human
+// browser-driven visual + interactive verify per the plan.
+// ----------------------------------------------------------------------
