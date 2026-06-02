@@ -1,0 +1,8 @@
+# Tauri / Cargo build artefacts
+target/
+WixTools/
+gen/
+
+# NOTE: Cargo.lock is INTENTIONALLY committed for this binary crate
+# (Rust convention for binaries; Phase 3's signed/notarised build needs
+# reproducible deps). Do NOT add Cargo.lock here.
