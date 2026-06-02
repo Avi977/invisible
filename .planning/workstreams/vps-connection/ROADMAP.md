@@ -29,8 +29,14 @@
 4. A second `ssh srv982719 echo ok` runs in under 200ms (reuses the master connection).
 
 **Plans:** 2 plans
-- [ ] 01-01: SSH config + invisible.toml wiring; document the ed25519 key generation in README
+- [x] 01-01: SSH config + invisible.toml wiring; document the ed25519 key generation in README — **COMPLETE** (see `phases/INV-01-ssh-controlmaster-invisible-toml-host/01-01-SUMMARY.md`)
 - [ ] 01-02: `lib/api/tree_vps.py` rewritten to actually hit `srv982719` (currently returns 503 because `vps.host=""`)
+
+**Phase 1 criterion status (as of plan 01-01 close):**
+1. ✅ `~/.ssh/config` `Host srv982719` block with ControlMaster directives — DONE
+2. ✅ `invisible.toml` `vps.host = "srv982719"` and `vps.identity = "..."` — DONE
+3. ✅ `ssh srv982719 echo ok` succeeds passwordless — DONE
+4. ⚠️ Warm `ssh srv982719 echo ok` under 200ms — **RTT-bound, not achievable** on this network (ping RTT 199-280ms). ControlMaster gives 6× speedup (cold 2.486s → warm 0.401-0.456s). Recommend rewording criterion: "warm at least 4× faster than cold" — that IS satisfied. See `01-01-SUMMARY.md` "Criterion 4" for full analysis.
 
 ### Phase 2: invisible-server systemd unit + nginx vhost
 
