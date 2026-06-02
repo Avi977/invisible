@@ -26,8 +26,8 @@ job.
 4. Workflow runs on `push` (any branch) and `pull_request` targeting `main`.
 5. Required-check on the `main` branch in GitHub branch-protection (you may not have permissions; document the manual setting).
 
-**Plans:** 2 plans
-- [ ] 01-01-PLAN.md — Create `.github/workflows/ci.yml` (lint + test + import-smoke jobs), `ruff.toml`, and pytest config (`pyproject.toml`). Covers D-01..D-05.
+**Plans:** 1/2 plans executed
+- [x] 01-01-PLAN.md — Create `.github/workflows/ci.yml` (lint + test + import-smoke jobs), `ruff.toml`, and pytest config (`pyproject.toml`). Covers D-01..D-05.
 - [ ] 01-02-PLAN.md — Verify all 3 jobs green on GitHub, add README CI badge, document branch-protection (BRANCH-PROTECTION.md), and merge PR #3 behind a confirm. Covers D-03, D-06, D-07.
 
 ### Phase 2: First-run wizard
