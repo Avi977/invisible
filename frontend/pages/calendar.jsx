@@ -21,11 +21,11 @@ const {
   useCallback: useCallbackC,
 } = React;
 
-// API_BASE picks up window.INVISIBLE_API_BASE if set (the Playwright smoke
+// CAL_API_BASE picks up window.INVISIBLE_API_BASE if set (the Playwright smoke
 // uses addInitScript to point at an alt port). Default matches
 // frontend/data.jsx:464 so a normal user run is identical to the rest of the
 // frontend's network surface.
-const API_BASE = (typeof window !== "undefined" && window.INVISIBLE_API_BASE)
+const CAL_API_BASE = (typeof window !== "undefined" && window.INVISIBLE_API_BASE)
   ? window.INVISIBLE_API_BASE
   : "http://127.0.0.1:8765";
 
@@ -514,7 +514,7 @@ function Calendar() {
     setStatus("loading");
     setErrorMsg("");
 
-    fetch(`${API_BASE}/api/v1/calendar?from=${fmtDate(monday)}&to=${fmtDate(sunday)}`, { credentials: "omit" })
+    fetch(`${CAL_API_BASE}/api/v1/calendar?from=${fmtDate(monday)}&to=${fmtDate(sunday)}`, { credentials: "omit" })
       .then(async (response) => {
         if (!response.ok) {
           // Try to read the body for a console warn, but DO NOT surface the

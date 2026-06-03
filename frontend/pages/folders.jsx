@@ -11,7 +11,7 @@ const { useState: useStateF, useEffect: useEffectF, useRef: useRefF } = React;
 
 // The dashboard daemon. Hardcoded for now; a future plan (REQ-06 Vite shell)
 // will move this into a shared config or env injection.
-const API_BASE = "http://127.0.0.1:8765";
+const FOLDERS_API_BASE = "http://127.0.0.1:8765";
 
 // EventSource auto-reconnects forever with backoff. After this many consecutive
 // `error` events with no intervening `snapshot`/`diff`, surface a column-level
@@ -20,7 +20,7 @@ const SSE_ERROR_CEILING = 3;
 
 // Token discovery: URL ?token= first (lets you bookmark from phone),
 // then window.INVISIBLE_TOKEN (future bootstrap injection).
-function getToken() {
+function getTokenFolders() {
   const u = new URLSearchParams(window.location.search).get("token");
   if (u) return u;
   if (window.INVISIBLE_TOKEN) return window.INVISIBLE_TOKEN;
@@ -112,7 +112,7 @@ function Folders({ project } = {}) {
     || null;
 
   useEffectF(() => {
-    const token = getToken();
+    const token = getTokenFolders();
     const headers = token ? { Authorization: "Bearer " + token } : {};
     const qs = effectiveProject ? "?project=" + encodeURIComponent(effectiveProject) : "";
 
@@ -121,7 +121,7 @@ function Folders({ project } = {}) {
     // One fetch per source. Errors land in errors[key]; data lands in trees[key].
     // Returns the promise so the outer Promise.all can flip `loading` off.
     const fetchOne = (key) =>
-      fetch(API_BASE + "/api/v1/tree/" + key + qs, { headers })
+      fetch(FOLDERS_API_BASE + "/api/v1/tree/" + key + qs, { headers })
         .then((r) => r.json().then((body) => ({ ok: r.ok, status: r.status, body })))
         .then(({ ok, status, body }) => {
           if (cancelled) return;
@@ -148,7 +148,7 @@ function Folders({ project } = {}) {
     // SSE subscription for the local source. EventSource cannot set the
     // Authorization header, so the token rides as ?token= (the dashboard's
     // _token_from_request helper accepts both forms).
-    const sseUrl = API_BASE + "/api/v1/tree/local?watch=1"
+    const sseUrl = FOLDERS_API_BASE + "/api/v1/tree/local?watch=1"
       + (token ? "&token=" + encodeURIComponent(token) : "")
       + (effectiveProject ? "&project=" + encodeURIComponent(effectiveProject) : "");
     const es = new EventSource(sseUrl);

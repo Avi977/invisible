@@ -11,8 +11,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
-  <link rel="stylesheet" href="styles.css"/>
-
   <!-- xterm.js CDN; integrity hashes deferred — pinned version is sufficient for local-only frontend -->
   <!-- Assets: xterm/css/xterm.css + xterm/lib/xterm.js + xterm-addon-fit/lib/xterm-addon-fit.js -->
   <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css" crossorigin="anonymous"/>
@@ -23,28 +21,110 @@
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-  <!-- 3d-force-graph (bundles three.js + d3-force-3d) — consumed by pages/relations.jsx -->
-  <script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js" crossorigin="anonymous"></script>
+  <!-- Note: the relations "galaxy" renders on a 2D canvas with manual 3D
+       projection (see pages/relations.jsx), so the old 3d-force-graph dependency
+       is intentionally gone. -->
 </head>
 <body>
   <div id="root"></div>
 
-  <script type="text/babel" src="tweaks-panel.jsx"></script>
-  <script type="text/babel" src="icons.jsx"></script>
-  <script type="text/babel" src="data.jsx"></script>
-  <script type="text/babel" src="ai-chat.jsx"></script>
-  <script type="text/babel" src="pages/dashboard.jsx"></script>
-  <script type="text/babel" src="pages/folders.jsx"></script>
-  <script type="text/babel" src="pages/relations.jsx"></script>
-  <script type="text/babel" src="pages/terminals.jsx"></script>
-  <script type="text/babel" src="pages/tools.jsx"></script>
-  <script type="text/babel" src="pages/calendar.jsx"></script>
-  <script type="text/babel" src="pages/focus.jsx"></script>
-  <script type="text/babel" src="pages/analytics.jsx"></script>
-  <script type="text/babel" src="app.jsx"></script>
-  <script type="text/babel">
-    const root = ReactDOM.createRoot(document.getElementById("root"));
-    root.render(<App/>);
+  <!-- Bootstrap: route every source file through a tiny VFS so the Nerd Mode IDE
+       can edit them at runtime and persist overrides to localStorage. Otherwise
+       <script src> would bypass that. styles.css → <style>, JSX → <script type=
+       text/babel>; both tagged data-nerd-path so Nerd Mode can target them. -->
+  <script>
+    (async function bootstrap() {
+      const FILES = [
+        { path: "styles.css",          type: "css" },
+        { path: "tweaks-panel.jsx",    type: "jsx" },
+        { path: "icons.jsx",           type: "jsx" },
+        { path: "data.jsx",            type: "jsx" },
+        { path: "ai-chat.jsx",         type: "jsx" },
+        { path: "nerd-mode.jsx",       type: "jsx" },
+        { path: "galaxy-data.jsx",     type: "jsx" },
+        { path: "pages/dashboard.jsx", type: "jsx" },
+        { path: "pages/folders.jsx",   type: "jsx" },
+        { path: "pages/relations.jsx", type: "jsx" },
+        { path: "pages/terminals.jsx", type: "jsx" },
+        { path: "pages/tools.jsx",     type: "jsx" },
+        { path: "pages/calendar.jsx",  type: "jsx" },
+        { path: "pages/focus.jsx",     type: "jsx" },
+        { path: "pages/analytics.jsx", type: "jsx" },
+        { path: "app.jsx",             type: "jsx" },
+      ];
+
+      const fail = (msg) => {
+        const root = document.getElementById("root");
+        if (root) root.innerHTML =
+          '<div style="font:14px ui-monospace,monospace;color:#ff8585;padding:40px;max-width:680px">' +
+          '<b>invisible failed to boot.</b><br><br>' + msg +
+          '<br><br>Check the console. To drop Nerd Mode overrides: ' +
+          '<code>localStorage.clear()</code> then reload.</div>';
+        console.error("[bootstrap]", msg);
+      };
+
+      const VFS = { originals: {}, current: {} };
+      window.__VFS = VFS;
+
+      async function load(path) {
+        const r = await fetch(path, { cache: "no-store" });
+        if (!r.ok) throw new Error("fetch " + path + " " + r.status);
+        return r.text();
+      }
+
+      try {
+        // Fetch all originals + reconcile against localStorage overrides.
+        await Promise.all(FILES.map(async (f) => {
+          try {
+            VFS.originals[f.path] = await load(f.path);
+          } catch (e) {
+            console.error("[bootstrap] failed to load", f.path, e);
+            VFS.originals[f.path] = f.type === "css" ? "/* failed to load */" : "";
+          }
+          let override = null;
+          try { override = localStorage.getItem("nerd:" + f.path); } catch (_) {}
+          VFS.current[f.path] = override !== null ? override : VFS.originals[f.path];
+        }));
+
+        // Wait for Babel.
+        const t0 = Date.now();
+        while (!window.Babel) {
+          if (Date.now() - t0 > 8000) return fail("Babel never loaded from unpkg.");
+          await new Promise((r) => setTimeout(r, 25));
+        }
+
+        // Inject in deterministic order. CSS → <style>, JSX → <script type=text/babel>.
+        for (const f of FILES) {
+          const text = VFS.current[f.path];
+          if (f.type === "css") {
+            const s = document.createElement("style");
+            s.dataset.nerdPath = f.path;
+            s.textContent = text;
+            document.head.appendChild(s);
+          } else {
+            const s = document.createElement("script");
+            s.type = "text/babel";
+            s.dataset.presets = "react";
+            s.dataset.nerdPath = f.path;
+            s.textContent = text;
+            document.body.appendChild(s);
+          }
+        }
+
+        // Inline text/babel scripts must be compiled explicitly since
+        // DOMContentLoaded already fired.
+        Babel.transformScriptTags();
+
+        if (typeof window.App === "undefined") {
+          return fail("app.jsx did not define window.App (a JSX file likely failed to compile — see console for the Babel error).");
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById("root"));
+        root.render(React.createElement(window.App));
+      } catch (e) {
+        fail((e && e.message) || String(e));
+      }
+    })();
   </script>
 </body>
 </html>

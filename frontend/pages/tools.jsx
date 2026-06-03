@@ -12,12 +12,12 @@ const { useState: useStateTL, useRef: useRefTL, useEffect: useEffectTL, useMemo:
 
 // The dashboard daemon. Same hardcoded base as folders.jsx (a future Vite-shell
 // plan will move this into shared config / env injection).
-const API_BASE = "http://127.0.0.1:8765";
+const TOOLS_API_BASE = "http://127.0.0.1:8765";
 
 // Token discovery mirrors folders.jsx: URL ?token= first (bookmarkable from phone),
 // then window.INVISIBLE_TOKEN (future bootstrap injection). When the daemon runs
 // with --no-auth there is no token and the Authorization header is omitted.
-function getToken() {
+function getTokenTools() {
   const u = new URLSearchParams(window.location.search).get("token");
   if (u) return u;
   if (window.INVISIBLE_TOKEN) return window.INVISIBLE_TOKEN;
@@ -310,11 +310,11 @@ function Tools({ projects, selectedProject, setSelectedProject }) {
     setLoading(true);
     setLoadError(null);
 
-    const token = getToken();
+    const token = getTokenTools();
     const headers = token ? { Authorization: "Bearer " + token } : {};
     const qs = "?project=" + encodeURIComponent(projId);
 
-    fetch(API_BASE + "/api/v1/tools" + qs, { headers })
+    fetch(TOOLS_API_BASE + "/api/v1/tools" + qs, { headers })
       .then((r) => r.json().then((body) => ({ ok: r.ok, status: r.status, body })))
       .then(({ ok, status, body }) => {
         if (cancelled) return;
@@ -353,10 +353,10 @@ function Tools({ projects, selectedProject, setSelectedProject }) {
     timer.current = setTimeout(() => {
       const target = projIdRef.current;
       if (!target) return;
-      const token = getToken();
+      const token = getTokenTools();
       const headers = token ? { Authorization: "Bearer " + token } : {};
       setSaveState("saving");
-      fetch(API_BASE + "/api/v1/tools?project=" + encodeURIComponent(target), {
+      fetch(TOOLS_API_BASE + "/api/v1/tools?project=" + encodeURIComponent(target), {
         method: "PUT",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({ nodes, edges }),

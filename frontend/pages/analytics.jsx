@@ -24,7 +24,7 @@ const fmtK = (n) => {
   if (n >= 1_000)     return (n / 1_000).toFixed(n >= 10_000 ? 0 : 1) + "k";
   return String(n);
 };
-const fmtH = (h) => h >= 100 ? `${Math.round(h)}h` : `${h.toFixed(1)}h`;
+const fmtHrs = (h) => h >= 100 ? `${Math.round(h)}h` : `${h.toFixed(1)}h`;
 const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 
 // Slice last N days from a 30-day series
@@ -114,7 +114,7 @@ function StackedAreaChart({ data, range, projects, projectMap, mode = "tokens" }
           <g key={i}>
             <line x1={PAD_L} x2={W - PAD_R} y1={yAt(v)} y2={yAt(v)} stroke="rgba(255,255,255,0.06)" strokeDasharray={i ? "2 4" : ""}/>
             <text x={PAD_L - 6} y={yAt(v) + 3} textAnchor="end" fontFamily="var(--font-mono)" fontSize="9" fill="var(--text-4)">
-              {mode === "tokens" ? fmtK(v * 1000) : fmtH(v)}
+              {mode === "tokens" ? fmtK(v * 1000) : fmtHrs(v)}
             </text>
           </g>
         ))}
@@ -363,7 +363,7 @@ function Analytics({ projects }) {
         />
         <StatCard
           label="Time spent"
-          value={fmtH(totalHours)}
+          value={fmtHrs(totalHours)}
           sub={`avg ${(totalHours / range).toFixed(1)}h/day`}
           accent="var(--c-graph)"
           icon={<I.Clock size={14}/>}
@@ -378,7 +378,7 @@ function Analytics({ projects }) {
         <StatCard
           label="Top project"
           value={topProj ? projectMap[topProj.pid].name : "—"}
-          sub={topProj ? `${fmtK(topProj.tokens)} tokens · ${fmtH(topProj.time)}` : ""}
+          sub={topProj ? `${fmtK(topProj.tokens)} tokens · ${fmtHrs(topProj.time)}` : ""}
           accent={topProj ? projectMap[topProj.pid].color : undefined}
           icon={<I.Star size={14}/>}
         />
@@ -407,7 +407,7 @@ function Analytics({ projects }) {
           items={projTotals
             .slice().sort((a, b) => b.time - a.time)
             .map(t => ({ id: t.pid, label: projectMap[t.pid].name, value: t.time, color: projectMap[t.pid].color }))}
-          format={fmtH}
+          format={fmtHrs}
         />
 
         <HorizontalBars

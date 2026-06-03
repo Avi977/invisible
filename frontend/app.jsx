@@ -23,7 +23,7 @@ const DEFAULTS = /*EDITMODE-BEGIN*/{
 
 const DENSITY_VALUES = { compact: 0.88, comfy: 1.0, spacious: 1.12 };
 
-function Sidebar({ activeId, onChange, collapsed, onToggle }) {
+function Sidebar({ activeId, onChange, collapsed, onToggle, onOpenNerd, nerdOpen }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -74,6 +74,13 @@ function Sidebar({ activeId, onChange, collapsed, onToggle }) {
           <div className="sidebar-footer-name">dev@local</div>
           <div className="sidebar-footer-sub">⌘K · search</div>
         </div>
+        <button
+          className={"nerd-toggle " + (nerdOpen ? "active" : "")}
+          onClick={onOpenNerd}
+          title="Nerd mode — edit source (⌃`)"
+        >
+          {"{}"}
+        </button>
       </div>
 
       <button className="collapse-btn" onClick={onToggle} title={collapsed ? "Expand" : "Collapse"}>
@@ -83,7 +90,7 @@ function Sidebar({ activeId, onChange, collapsed, onToggle }) {
   );
 }
 
-function PageHeader({ page, projects, dataSetName }) {
+function PageHeader({ page, projects, dataSetName, onOpenNerd, nerdOpen }) {
   const subs = {
     dashboard: `${projects.length} projects · ${projects.filter(p => p.status === "in-progress").length} active`,
     focus:     "Deep work · one task at a time",
@@ -108,6 +115,15 @@ function PageHeader({ page, projects, dataSetName }) {
         <span className="chip"><span className="chip-dot" style={{ color: "var(--c-term)" }}/>online</span>
         <button className="icon-btn"><I.Search size={15}/></button>
         <button className="icon-btn"><I.Bell size={15}/></button>
+        <button
+          className={"nerd-pill " + (nerdOpen ? "active" : "")}
+          onClick={onOpenNerd}
+          title="Nerd mode — edit source (⌃`)"
+        >
+          <span className="nerd-pill-glyph">{"{ }"}</span>
+          <span className="nerd-pill-label">nerd mode</span>
+          <kbd className="nerd-pill-kbd">⌃`</kbd>
+        </button>
         <button className="icon-btn"><I.Settings size={15}/></button>
       </div>
     </header>
@@ -122,7 +138,20 @@ function App() {
   // consumes it and clears it via setPendingCommand(null). The token makes two
   // clicks of the same chip distinct requests even though the command matches.
   const [pendingCommand, setPendingCommand] = useStateApp(null);
+  const [nerdOpen, setNerdOpen] = useStateApp(false); // Nerd Mode IDE overlay
   const [t, setTweak] = useTweaks(DEFAULTS);
+
+  // Keyboard shortcut: Ctrl+` (or Cmd+`) toggles Nerd Mode.
+  useEffectApp(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "`" || e.key === "~")) {
+        e.preventDefault();
+        setNerdOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const navTo = (id, projectId = null, options = null) => {
     setPageId(id);
@@ -164,9 +193,11 @@ function App() {
           onChange={setPageId}
           collapsed={collapsed}
           onToggle={() => setTweak("sidebar", collapsed ? "expanded" : "collapsed")}
+          onOpenNerd={() => setNerdOpen((v) => !v)}
+          nerdOpen={nerdOpen}
         />
         <main className="page" key={pageId}>
-          <PageHeader page={page} projects={projects} dataSetName={data.name}/>
+          <PageHeader page={page} projects={projects} dataSetName={data.name} onOpenNerd={() => setNerdOpen((v) => !v)} nerdOpen={nerdOpen}/>
           <div className="page-body fade-in">
             {pageId === "dashboard"  && <Dashboard projects={projects} layout={t.mainLayout} dataSet={data.name} navTo={navTo}/>}
             {pageId === "focus"      && <Focus projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject}/>}
@@ -181,6 +212,10 @@ function App() {
       </div>
 
       <AIBubble pageContext={page.label}/>
+
+      {typeof NerdMode !== "undefined" && (
+        <NerdMode open={nerdOpen} onClose={() => setNerdOpen(false)}/>
+      )}
 
       <TweaksPanel title="Tweaks">
         <TweakSection label="Theme"/>
