@@ -30,12 +30,12 @@ const { useState: useStateT, useRef: useRefT, useEffect: useEffectT } = React;
 // decides hostname/port/identity AND any `RemoteCommand` (used here to
 // autocd into the project's VPS directory on connect).
 const PTY_PANES = [
-  { id: "local-1",  title: "local · zsh",            project_color: "#5cc8ff", project_id: null },
-  { id: "local-2",  title: "local · build",          project_color: "#b794ff", project_id: null },
-  { id: "local-3",  title: "local · scratch",        project_color: "#f5b343", project_id: null },
-  { id: "moto-vps", title: "vps · motorcycle-tyres", project_color: "#4ade80", project_id: "motorcycle-tyres" },
-  { id: "vps-log",  title: "vps · logs",             project_color: "#5ee0c8", project_id: null },
-  { id: "vps-k3s",  title: "vps · k3s",              project_color: "#f56fb1", project_id: null },
+  { id: "jobslayer-local", title: "local · jobslayer",        project_color: "#5cc8ff", project_id: "jobslayer" },
+  { id: "local-2",         title: "local · build",            project_color: "#b794ff", project_id: null },
+  { id: "local-3",         title: "local · scratch",          project_color: "#f5b343", project_id: null },
+  { id: "moto-vps",        title: "vps · motorcycle-tyres",   project_color: "#4ade80", project_id: "motorcycle-tyres" },
+  { id: "vps-log",         title: "vps · logs",               project_color: "#5ee0c8", project_id: null },
+  { id: "vps-k3s",         title: "vps · k3s",                project_color: "#f56fb1", project_id: null },
 ];
 
 function ContextHeader({ ctx, focused }) {
