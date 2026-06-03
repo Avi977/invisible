@@ -2,7 +2,34 @@
 
 **Date:** 2026-06-02 evening
 **Session that produced this:** ~6 hours of autonomous + interactive work
-**Status:** backend half of the "click-to-act dashboard" feature is **shipped**; frontend half is the only thing left.
+**Status:** ✅ **FRONTEND SHIPPED** (commit `c2e0910`, pushed to main 2026-06-02).
+The whole "click-to-act dashboard" feature is now live end-to-end.
+
+## ✅ SHIPPED — what got built (next session can ignore the plan below)
+
+All four pieces + the launcher tweak are done, verified in-browser (Playwright),
+and pushed:
+- **dashboard.jsx** — each card fetches `/api/v1/projects/<id>/brief` and renders
+  up to 5 risk-colored suggestion chips (low=green / medium=amber / high=red),
+  `why`+command as tooltip. Bounded poll (6×/~90s, cached) so chips appear as
+  background briefs land. Verified: jobslayer card shows its 5 chips.
+- **app.jsx** — `navTo(id, projectId, options)` 3rd arg carries
+  `{projectId, command, token}`; passed to `<Terminals>` as
+  `pendingCommand`/`setPendingCommand`.
+- **terminals.jsx** — the focused project pane queues the command and writes it
+  to its PTY WebSocket once OPEN, **without a trailing newline** (pre-typed, not
+  executed). Verified: click chip → Terminals focuses `local·jobslayer`, command
+  sits at the prompt unexecuted, Enter then runs it.
+- **bin/invisible-launch** — `--brief/--no-brief` (default on) regenerates briefs
+  in the background at startup so chips are warm by first click.
+- **Envy branding** (same commit): sidebar eye mark + ENVY wordmark, favicon,
+  title. Assets in `frontend/assets/`.
+
+Everything below is the ORIGINAL plan, kept for reference only.
+
+---
+
+**Status (original):** backend half of the "click-to-act dashboard" feature is **shipped**; frontend half is the only thing left.
 
 ## What you're walking into
 
