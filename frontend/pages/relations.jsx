@@ -39,146 +39,143 @@ async function fetchRelations(project) {
   }
 }
 
-// ── Deterministic layout ──────────────────────────────────────────
-// Distribute nodes into concentric rings by kind. Pure function: same
-// input → same output, so reloads produce the same layout. The four
-// rings are project (innermost) → module → doc → endpoint (outermost).
-function layoutNodes(rawNodes, width, height) {
-  const W = width || 800;
-  const H = height || 600;
-  const cx = W / 2;
-  const cy = H / 2;
-  const RING_RADIUS = { project: 90, module: 180, doc: 260, endpoint: 340 };
-  const FALLBACK_RADIUS = 380;
+// ── 3D graph renderer (data already loaded) ──────────────────────
+// Uses the global `ForceGraph3D` constructor from
+// https://unpkg.com/3d-force-graph (loaded in frontend/index.html). The
+// library bundles three.js + d3-force-3d, so we don't need a separate
+// three.js script tag.
+//
+// Backend shape:  { nodes: [{id, label, type, ...}], edges: [{from, to, kind}] }
+// Library shape:  { nodes: [{id, ...}],              links: [{source, target}] }
+// The mapping happens here in `toGraphData`.
+function toGraphData(rawNodes, rawEdges, visibleTypes) {
   const FALLBACK_COLOR = "#cccccc";
-
-  // Group nodes by kind, preserving incoming order within each ring so
-  // the layout is stable across reloads.
-  const buckets = { project: [], module: [], doc: [], endpoint: [], _other: [] };
-  for (const n of (rawNodes || [])) {
-    if (buckets[n.type]) buckets[n.type].push(n);
-    else buckets._other.push(n);
-  }
-
-  const out = [];
-  const placeRing = (members, radius) => {
-    const count = members.length;
-    if (!count) return;
-    for (let i = 0; i < count; i++) {
-      const n = members[i];
-      const angle = 2 * Math.PI * (i / count);
-      out.push({
-        ...n,
-        x: cx + radius * Math.cos(angle),
-        y: cy + radius * Math.sin(angle),
-        color: KIND_COLOR[n.type] || FALLBACK_COLOR,
-      });
-    }
-  };
-
-  placeRing(buckets.project,  RING_RADIUS.project);
-  placeRing(buckets.module,   RING_RADIUS.module);
-  placeRing(buckets.doc,      RING_RADIUS.doc);
-  placeRing(buckets.endpoint, RING_RADIUS.endpoint);
-  placeRing(buckets._other,   FALLBACK_RADIUS);
-
-  return out;
+  const nodes = (rawNodes || [])
+    .filter(n => visibleTypes[n.type])
+    .map(n => ({
+      id: n.id,
+      label: n.label || n.id,
+      type: n.type,
+      color: KIND_COLOR[n.type] || FALLBACK_COLOR,
+      file_path: n.file_path || null,
+    }));
+  const visibleIds = new Set(nodes.map(n => n.id));
+  const links = (rawEdges || [])
+    .filter(e => visibleIds.has(e.from) && visibleIds.has(e.to))
+    .map(e => ({ source: e.from, target: e.to, kind: e.kind || "ref" }));
+  return { nodes, links };
 }
 
-// ── Inner graph renderer (data already loaded) ────────────────────
 function RelationsGraph({ nodes: rawNodes, edges: rawEdges }) {
-  const [nodes, setNodes] = useStateG(() => layoutNodes(rawNodes, 800, 600));
-  const [drag, setDrag] = useStateG(null);
-  const [hover, setHover] = useStateG(null);
-  const [filter, setFilter] = useStateG({ module: true, doc: true, project: true, endpoint: true });
   const wrapRef = useRefG(null);
+  const graphRef = useRefG(null);  // holds the ForceGraph3D instance
+  const [filter, setFilter] = useStateG({ module: true, doc: true, project: true, endpoint: true });
+  const [hover, setHover] = useStateG(null);
 
-  // Re-lay out when the data prop identity changes. The fetch is mount-once
-  // today, but this is defensive against a future refresh button.
-  useEffectG(() => { setNodes(layoutNodes(rawNodes, 800, 600)); }, [rawNodes]);
-
-  // Reset handler: snap nodes back to the deterministic layout.
-  const resetLayout = useCallbackG(() => {
-    setNodes(layoutNodes(rawNodes, 800, 600));
-  }, [rawNodes]);
-
-  const visible = nodes.filter(n => filter[n.type]);
-  const visibleIds = new Set(visible.map(n => n.id));
-  const visibleEdges = (rawEdges || []).filter(e => visibleIds.has(e.from) && visibleIds.has(e.to));
-
+  // One-time instantiate of the ForceGraph3D instance, bound to wrapRef.
+  // Tearing it down on unmount avoids leaking the WebGL renderer + animation
+  // loop. The data + interaction handlers are wired in a second useEffect
+  // so they pick up React state updates without recreating the canvas.
   useEffectG(() => {
-    if (!drag) return;
-    const move = (e) => {
-      const rect = wrapRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left - drag.dx;
-      const y = e.clientY - rect.top - drag.dy;
-      setNodes(ns => ns.map(n => n.id === drag.id ? { ...n, x, y } : n));
+    if (typeof ForceGraph3D !== "function") {
+      console.error("[relations] ForceGraph3D not on window — index.html script tag missing or CDN blocked?");
+      return;
+    }
+    if (!wrapRef.current) return;
+    const el = wrapRef.current;
+    const g = ForceGraph3D()(el)
+      .backgroundColor("rgba(0,0,0,0)")        // transparent so the page bg shows through
+      .showNavInfo(false)                      // hide the default top-left help text
+      .nodeRelSize(5)
+      .nodeColor(n => n.color)
+      .nodeLabel(n => `${n.label} <span style="opacity:.6">· ${n.type}</span>`)
+      .linkColor(() => "rgba(255,255,255,0.18)")
+      .linkOpacity(0.5)
+      .linkWidth(0.6)
+      .linkDirectionalParticles(0)             // bump >0 if we want flowing particles per link
+      .onNodeHover(n => setHover(n ? n.id : null))
+      .onNodeClick(n => {
+        // Snap the camera to the clicked node — gives a "drill in" feel.
+        const dist = 80;
+        const r = Math.hypot(n.x || 0, n.y || 0, n.z || 0) || 1;
+        const k = 1 + dist / r;
+        g.cameraPosition({ x: (n.x || 0) * k, y: (n.y || 0) * k, z: (n.z || 0) * k }, n, 1500);
+      });
+
+    // ResizeObserver — keep the WebGL canvas matching the wrapper.
+    const ro = new ResizeObserver(() => {
+      g.width(el.clientWidth).height(el.clientHeight);
+    });
+    ro.observe(el);
+    g.width(el.clientWidth).height(el.clientHeight);
+
+    graphRef.current = g;
+    return () => {
+      ro.disconnect();
+      // 3d-force-graph exposes _destructor (lib-private) for full cleanup;
+      // fall back to detaching the canvas if that's not present.
+      try { g._destructor && g._destructor(); } catch (_) { /* swallow */ }
+      while (el.firstChild) el.removeChild(el.firstChild);
+      graphRef.current = null;
     };
-    const up = () => setDrag(null);
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
-  }, [drag]);
+  }, []);
 
-  const startDrag = (e, n) => {
-    const rect = wrapRef.current.getBoundingClientRect();
-    setDrag({ id: n.id, dx: (e.clientX - rect.left) - n.x, dy: (e.clientY - rect.top) - n.y });
-  };
+  // Push graph data whenever the raw input or the filter set changes.
+  // Hover state intentionally NOT in deps — we update hover-driven visuals
+  // by setting node/link color callbacks below in a separate effect.
+  useEffectG(() => {
+    if (!graphRef.current) return;
+    graphRef.current.graphData(toGraphData(rawNodes, rawEdges, filter));
+  }, [rawNodes, rawEdges, filter]);
 
-  const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+  // Wire hover-driven dimming. The library re-reads node/link color
+  // closures on every frame, so updating the closures via setters
+  // here is enough; no need to re-feed graphData.
+  useEffectG(() => {
+    const g = graphRef.current;
+    if (!g) return;
+    // Build a neighbour set once per hover so the per-frame closures stay O(1).
+    let nbrs = null;
+    if (hover) {
+      nbrs = new Set([hover]);
+      for (const e of (rawEdges || [])) {
+        if (e.from === hover) nbrs.add(e.to);
+        if (e.to === hover) nbrs.add(e.from);
+      }
+    }
+    g.nodeColor(n => {
+      if (!nbrs) return n.color;
+      return nbrs.has(n.id) ? n.color : "rgba(120,120,140,0.25)";
+    });
+    g.linkColor(l => {
+      if (!nbrs) return "rgba(255,255,255,0.18)";
+      const src = typeof l.source === "object" ? l.source.id : l.source;
+      const tgt = typeof l.target === "object" ? l.target.id : l.target;
+      return (src === hover || tgt === hover) ? "rgba(180, 210, 255, 0.85)" : "rgba(255,255,255,0.05)";
+    });
+    g.linkWidth(l => {
+      const src = typeof l.source === "object" ? l.source.id : l.source;
+      const tgt = typeof l.target === "object" ? l.target.id : l.target;
+      return (hover && (src === hover || tgt === hover)) ? 1.4 : 0.6;
+    });
+  }, [hover, rawEdges]);
 
-  // Highlight edges and connected nodes when hovering. Edge shape is the
-  // new backend `{from, to, kind}` object — NOT the legacy `[a,b]` tuple.
-  const isEdgeActive = (e) => hover && (e.from === hover || e.to === hover);
-  const isNodeActive = (id) => {
-    if (!hover) return true;
-    if (id === hover) return true;
-    return visibleEdges.some(e => (e.from === hover && e.to === id) || (e.to === hover && e.from === id));
-  };
+  // Reset = re-zoom-to-fit and shake the simulation a little so nodes
+  // settle from whatever drag position they were in.
+  const resetLayout = useCallbackG(() => {
+    const g = graphRef.current;
+    if (!g) return;
+    g.zoomToFit(800, 40);
+    g.d3ReheatSimulation && g.d3ReheatSimulation();
+  }, []);
 
+  // ForceGraph3D wipes its mount target's children when it initializes —
+  // so the canvas container has to be a dedicated inner div with no
+  // siblings inside it. Legend + controls sit alongside as absolute-
+  // positioned overlays in the outer .graph-wrap.
   return (
-    <div className="graph-wrap" ref={wrapRef}>
-      <svg className="graph-svg">
-        <defs>
-          <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.25)"/>
-            <stop offset="100%" stopColor="rgba(255,255,255,0.05)"/>
-          </linearGradient>
-        </defs>
-        {visibleEdges.map((e, i) => {
-          const na = nodeMap[e.from], nb = nodeMap[e.to];
-          if (!na || !nb) return null;
-          const active = isEdgeActive(e);
-          return (
-            <line
-              key={i}
-              x1={na.x} y1={na.y} x2={nb.x} y2={nb.y}
-              stroke={active ? "rgba(180, 210, 255, 0.7)" : "rgba(255,255,255,0.10)"}
-              strokeWidth={active ? 1.5 : 1}
-              style={{ transition: "stroke 200ms, stroke-width 200ms" }}
-            />
-          );
-        })}
-      </svg>
-
-      {visible.map(n => (
-        <div
-          key={n.id}
-          className={"graph-node kind-" + (KIND_TO_CSS[n.type] || "repo") + (drag?.id === n.id ? " dragging" : "")}
-          style={{
-            left: n.x, top: n.y,
-            "--n-c": n.color,
-            opacity: isNodeActive(n.id) ? 1 : 0.32,
-            transition: drag?.id === n.id ? "none" : "opacity 200ms",
-          }}
-          onMouseDown={(e) => startDrag(e, n)}
-          onMouseEnter={() => setHover(n.id)}
-          onMouseLeave={() => setHover(null)}
-        >
-          <span className="n-dot"/>
-          {n.label}
-        </div>
-      ))}
+    <div className="graph-wrap" style={{ position: "relative" }}>
+      <div ref={wrapRef} style={{ position: "absolute", inset: 0 }}/>
 
       <div className="graph-legend">
         <div style={{ color: "var(--text-2)", marginBottom: 4 }}>FILTER</div>
@@ -189,12 +186,18 @@ function RelationsGraph({ nodes: rawNodes, edges: rawEdges }) {
             <span>{label}</span>
           </div>
         ))}
+        <div style={{ color: "var(--text-2)", marginTop: 8, fontSize: 11 }}>
+          drag = orbit · scroll = zoom · click node = focus
+        </div>
       </div>
 
       <div className="graph-controls">
-        <button className="icon-btn" title="Reset" onClick={resetLayout}><I.Sparkles size={14}/></button>
-        {/* TODO: zoom support — currently a no-op so the visual control stays parked here for a follow-up plan */}
-        <button className="icon-btn" title="Zoom in"><I.Plus size={14}/></button>
+        <button className="icon-btn" title="Reset view + reheat simulation" onClick={resetLayout}><I.Sparkles size={14}/></button>
+        <button className="icon-btn" title="Zoom in" onClick={() => {
+          const g = graphRef.current; if (!g) return;
+          const cam = g.cameraPosition();
+          g.cameraPosition({ x: cam.x * 0.8, y: cam.y * 0.8, z: cam.z * 0.8 }, undefined, 400);
+        }}><I.Plus size={14}/></button>
       </div>
     </div>
   );
