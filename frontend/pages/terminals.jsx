@@ -91,12 +91,29 @@ function ContextHeader({ ctx, focused }) {
   );
 }
 
-function TerminalPane({ idx, focused, onFocus, pane }) {
+function TerminalPane({ idx, focused, onFocus, pane, injectRequest, onInjected }) {
   const containerRef = useRefT(null);
   const termRef = useRefT(null);
   const fitRef = useRefT(null);
   const wsRef = useRefT(null);
+  const pendingInjectRef = useRefT(null);   // command queued until the socket opens
   const [ctxRaw, setCtxRaw] = useStateT(null);
+
+  // Write a queued command to the PTY as keystrokes WITHOUT a trailing newline,
+  // so the shell echoes it at the prompt but does NOT execute it — the user
+  // reviews and presses Enter (the explicit "no auto-run" UX choice). No-op
+  // until the socket is OPEN; a command that arrives while the socket is still
+  // CONNECTING waits in pendingInjectRef and is flushed from ws.onopen.
+  const flushInject = () => {
+    const cmd = pendingInjectRef.current;
+    if (cmd == null) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(cmd);
+    pendingInjectRef.current = null;
+    setTimeout(() => { try { termRef.current?.focus(); } catch (_e) {} }, 30);
+    if (onInjected) onInjected();
+  };
 
   // Boot xterm + WS once per mount (per pane.id). pane.id is stable for the
   // life of the page so an empty dep array is intentional — we want exactly
@@ -138,6 +155,9 @@ function TerminalPane({ idx, focused, onFocus, pane }) {
       // Send an initial resize hint as a soft signal; daemon ignores it but
       // browsers vary on first-frame timing — re-fit on next tick is safest.
       setTimeout(() => { try { fit.fit(); } catch (_e) {} }, 0);
+      // A Dashboard chip click mounts this page fresh, so the command is
+      // usually queued before the socket opens — write it now that it's open.
+      flushInject();
     };
 
     ws.onmessage = (ev) => {
@@ -185,6 +205,15 @@ function TerminalPane({ idx, focused, onFocus, pane }) {
     return () => clearTimeout(t);
   }, [focused]);
 
+  // Queue a command handed to this pane by the page. Strip any trailing newline
+  // so we never auto-execute. injectRequest.token makes each chip click a
+  // distinct request (re-fires this effect even for an identical command).
+  useEffectT(() => {
+    if (!injectRequest || !injectRequest.command) return;
+    pendingInjectRef.current = String(injectRequest.command).replace(/[\r\n]+$/, "");
+    flushInject();
+  }, [injectRequest && injectRequest.token]);
+
   // Merge daemon's live context with the local visual identity. The daemon
   // owns goal/activity/next; PTY_PANES owns project/color.
   // - ctxRaw null  → fetch failed (daemon down or network error). Show collapsed.
@@ -216,7 +245,7 @@ function TerminalPane({ idx, focused, onFocus, pane }) {
   );
 }
 
-function Terminals({ projects, selectedProject, setSelectedProject }) {
+function Terminals({ projects, selectedProject, setSelectedProject, pendingCommand, setPendingCommand }) {
   // Match selectedProject to the pane whose project_id equals it. With Plan 02
   // bindings still server-side-only, project_id is null for all panes — the
   // lookup returns -1 and we keep the user's last focusIdx. The hook is
@@ -237,6 +266,19 @@ function Terminals({ projects, selectedProject, setSelectedProject }) {
   // Order so focused goes first (takes large slot)
   const order = [focusIdx, ...PTY_PANES.map((_, i) => i).filter(i => i !== focusIdx)];
   const focusedPane = PTY_PANES[focusIdx];
+
+  // Which pane consumes a pending command. Prefer the pane bound to the
+  // command's project; fall back to the focused pane for a generic command or a
+  // project with no dedicated pane. -1 = nothing pending.
+  const injectIdx = (() => {
+    if (!pendingCommand || !pendingCommand.command) return -1;
+    if (pendingCommand.projectId) {
+      const i = PTY_PANES.findIndex(p => p.project_id === pendingCommand.projectId);
+      return i >= 0 ? i : focusIdx;
+    }
+    return focusIdx;
+  })();
+  const clearPending = () => { if (setPendingCommand) setPendingCommand(null); };
 
   return (
     <>
@@ -284,6 +326,8 @@ function Terminals({ projects, selectedProject, setSelectedProject }) {
             idx={i}
             pane={PTY_PANES[i]}
             focused={slot === 0}
+            injectRequest={i === injectIdx ? pendingCommand : null}
+            onInjected={clearPending}
             onFocus={() => {
               setFocusIdx(i);
               if (PTY_PANES[i].project_id) setSelectedProject(PTY_PANES[i].project_id);

@@ -155,7 +155,20 @@ button { background: none; border: none; cursor: pointer; padding: 0; }
   filter: blur(0.5px);
   box-shadow: 0 0 12px rgba(255,255,255,.15);
 }
-.brand-text { font-style: italic; opacity: 0.95; }
+.brand-logo {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  user-select: none;
+  filter: drop-shadow(0 0 9px rgba(168, 85, 247, 0.45));
+}
+.brand-text {
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.95;
+}
 .collapsed .brand-text,
 .collapsed .nav-label,
 .collapsed .nav-section-title,
@@ -578,6 +591,53 @@ input.field:focus, textarea.field:focus { border-color: var(--accent-soft); }
   letter-spacing: 0.16em;
   color: var(--text-4);
   margin: 6px 0 2px;
+}
+
+/* AI-suggested action chips (Dashboard cards → click pre-types into terminal) */
+.proj-suggest {
+  margin-top: 8px;
+}
+.proj-suggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+.suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 9px 4px 8px;
+  border-radius: 999px;
+  background: var(--glass-2);
+  border: 1px solid var(--border-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--text-2);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s ease, background .15s ease, transform .12s ease;
+}
+.suggest-chip:hover {
+  background: color-mix(in oklab, var(--risk-c, var(--accent)) 12%, var(--glass-2));
+  border-color: color-mix(in oklab, var(--risk-c, var(--accent)) 55%, transparent);
+  transform: translateY(-1px);
+}
+.suggest-chip:active { transform: translateY(0); }
+.suggest-chip-dot {
+  flex: none;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--risk-c, var(--accent));
+  box-shadow: 0 0 7px var(--risk-c, var(--accent));
+}
+.suggest-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
 }
 
 /* ── Folders page ───────────────────────────────────────────────── */

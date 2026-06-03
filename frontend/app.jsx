@@ -27,8 +27,8 @@ function Sidebar({ activeId, onChange, collapsed, onToggle }) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className="brand-dot"/>
-        <span className="brand-text">invisible</span>
+        <img className="brand-logo" src="assets/eye.png" alt="Envy" draggable="false"/>
+        <span className="brand-text">envy</span>
       </div>
 
       <div className="nav-section-title">Workspace</div>
@@ -117,11 +117,23 @@ function PageHeader({ page, projects, dataSetName }) {
 function App() {
   const [pageId, setPageId] = useStateApp("dashboard");
   const [selectedProject, setSelectedProject] = useStateApp(null); // project id, for cross-page focus
+  // A command to pre-type into a project's terminal pane (from a Dashboard
+  // suggestion chip). Shape: {projectId, command, token}. The Terminals page
+  // consumes it and clears it via setPendingCommand(null). The token makes two
+  // clicks of the same chip distinct requests even though the command matches.
+  const [pendingCommand, setPendingCommand] = useStateApp(null);
   const [t, setTweak] = useTweaks(DEFAULTS);
 
-  const navTo = (id, projectId = null) => {
+  const navTo = (id, projectId = null, options = null) => {
     setPageId(id);
     if (projectId) setSelectedProject(projectId);
+    if (options && options.pendingCommand) {
+      setPendingCommand({
+        projectId,
+        command: options.pendingCommand,
+        token: Date.now() + Math.random(),
+      });
+    }
   };
 
   const page = PAGES.find(p => p.id === pageId);
@@ -160,7 +172,7 @@ function App() {
             {pageId === "focus"      && <Focus projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject}/>}
             {pageId === "folders"    && <Folders/>}
             {pageId === "relations"  && <Relations/>}
-            {pageId === "terminals"  && <Terminals projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject}/>}
+            {pageId === "terminals"  && <Terminals projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject} pendingCommand={pendingCommand} setPendingCommand={setPendingCommand}/>}
             {pageId === "tools"      && <Tools projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject}/>}
             {pageId === "calendar"   && <Calendar/>}
             {pageId === "analytics"  && <Analytics projects={projects}/>}

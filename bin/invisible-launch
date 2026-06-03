@@ -13,8 +13,9 @@
 # your default browser with the same one-click feel as the .app.
 #
 # Usage:
-#   bin/invisible-launch              # daemons + open browser
+#   bin/invisible-launch              # daemons + open browser + brief in bg
 #   bin/invisible-launch --no-browser # daemons only (you open manually)
+#   bin/invisible-launch --no-brief   # skip background per-project brief refresh
 #   bin/invisible-launch --port 8090  # change frontend port (also affects PTY/dashboard? no — those stay)
 #
 # Exit: Ctrl-C; trap kills all spawned daemons.
@@ -30,13 +31,18 @@ FRONTEND_PORT=8090
 DASHBOARD_PORT=8765
 PTY_PORT=8091
 OPEN_BROWSER=true
+RUN_BRIEF=true
+BRIEF_PID=""   # set when the background brief is spawned; defined now so the
+               # cleanup trap is safe under `set -u` even on an early Ctrl-C.
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-browser) OPEN_BROWSER=false ;;
+    --brief) RUN_BRIEF=true ;;
+    --no-brief) RUN_BRIEF=false ;;
     --port) FRONTEND_PORT="$2"; shift ;;
     -h|--help)
-      sed -n '2,18p' "$0" | sed 's/^# //;s/^#//'
+      sed -n '2,19p' "$0" | sed 's/^# //;s/^#//'
       exit 0
       ;;
     *) echo "invisible-launch: unknown arg: $1" >&2; exit 2 ;;
@@ -78,6 +84,11 @@ PTY_PID=$!
 cleanup() {
   echo ""
   echo "▶ Stopping daemons..."
+  # Brief is a one-shot background job; kill it if it's still generating so we
+  # don't orphan a `claude -p` call when the launcher exits mid-brief.
+  if [ -n "${BRIEF_PID:-}" ] && kill -0 "$BRIEF_PID" 2>/dev/null; then
+    kill "$BRIEF_PID" 2>/dev/null || true
+  fi
   for pid in "$DASH_PID" "$FRONT_PID" "$PTY_PID"; do
     if kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
@@ -115,6 +126,17 @@ wait_for_port() {
 wait_for_port "$DASHBOARD_PORT" dashboard || exit 1
 wait_for_port "$FRONTEND_PORT"  frontend  || exit 1
 wait_for_port "$PTY_PORT"       pty       || exit 1
+
+# ── Kick off per-project briefs in the background ───────────────────────
+# `claude -p` takes ~45-90s/project, so we never block startup on it. The
+# Dashboard polls the brief endpoint, so suggestion chips appear on each card
+# as soon as its brief lands — no manual page reload needed.
+if [ "$RUN_BRIEF" = true ]; then
+  echo ""
+  echo "▶ Generating per-project briefs in background → $LOGDIR/brief.log"
+  "$ROOT/bin/invisible-brief" --quiet >"$LOGDIR/brief.log" 2>&1 &
+  BRIEF_PID=$!
+fi
 
 echo ""
 echo "▶ App ready at: http://127.0.0.1:$FRONTEND_PORT/"

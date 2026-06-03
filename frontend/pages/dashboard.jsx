@@ -2,8 +2,71 @@
 
 const { useState, useEffect, useCallback } = React;
 
+// Per-project AI action briefs come from the dashboard daemon (same host as
+// fetchProjects). Each card shows up to 5 suggestion chips; clicking one routes
+// to the project's terminal with the command pre-typed (but NOT executed).
+const BRIEF_API_BASE = "http://127.0.0.1:8765";
+const SUGGEST_CAP = 5;
+const RISK_COLOR = { low: "#4ade80", medium: "#f5b343", high: "#ff7a7a" };
+
+// Session-scoped cache so flipping Dashboard layouts (which can remount cards)
+// doesn't refetch briefs. Only successful, non-empty results are cached, so a
+// project that hasn't been briefed yet keeps polling. Cleared on full reload.
+const _briefCache = {};
+
+// useBrief — fetch a project's suggestions, returning:
+//   null  → still loading (no chips yet)
+//   []    → loaded but none (or fetch failed; logged to console)
+//   [...] → suggestions to render
+// At launch `bin/invisible-brief` generates briefs in the background (~45-90s
+// per project), so an empty/never-briefed result is polled a few times before
+// giving up — chips then appear without a manual page reload.
+function useBrief(projectId) {
+  const [suggestions, setSuggestions] = useState(() => _briefCache[projectId] || null);
+
+  useEffect(() => {
+    if (_briefCache[projectId]) { setSuggestions(_briefCache[projectId]); return; }
+
+    let cancelled = false;
+    let timer = null;
+    let tries = 0;
+    const MAX_TRIES = 6;       // ~90s of polling while briefs generate at launch
+    const POLL_MS = 15000;
+
+    const load = () => {
+      tries += 1;
+      fetch(BRIEF_API_BASE + "/api/v1/projects/" + encodeURIComponent(projectId) + "/brief",
+            { credentials: "omit" })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => {
+          if (cancelled) return;
+          const list = (d && Array.isArray(d.suggestions)) ? d.suggestions.slice(0, SUGGEST_CAP) : [];
+          if (list.length > 0) {
+            _briefCache[projectId] = list;   // cache only real results
+            setSuggestions(list);
+          } else {
+            setSuggestions([]);              // show "none" for now …
+            if (tries < MAX_TRIES) timer = setTimeout(load, POLL_MS);  // … and keep polling
+          }
+        })
+        .catch(e => {
+          if (cancelled) return;
+          console.error("[brief] fetch failed for", projectId, e);
+          setSuggestions([]);
+          if (tries < MAX_TRIES) timer = setTimeout(load, POLL_MS);
+        });
+    };
+    load();
+
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [projectId]);
+
+  return suggestions;
+}
+
 function ProjectCard({ p, layout, navTo }) {
   const [todos, setTodos] = useState(p.todos);
+  const suggestions = useBrief(p.id);
   const toggle = (i) => setTodos(t => t.map((x, j) => j === i ? { ...x, done: !x.done } : x));
   const done = todos.filter(t => t.done).length;
   const statusColor = {
@@ -94,6 +157,26 @@ function ProjectCard({ p, layout, navTo }) {
           >
             <I.Target size={12}/> Focus <I.ChevronR size={11}/>
           </button>
+        </div>
+      )}
+
+      {layout !== "kanban" && suggestions && suggestions.length > 0 && (
+        <div className="proj-suggest">
+          <div className="card-sub">Suggested · {suggestions.length}</div>
+          <div className="proj-suggest-chips">
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                className="suggest-chip"
+                style={{ "--risk-c": RISK_COLOR[s.risk] || RISK_COLOR.low }}
+                title={(s.why ? s.why + "\n\n" : "") + "$ " + (s.command || "")}
+                onClick={() => navTo("terminals", p.id, { pendingCommand: s.command })}
+              >
+                <span className="suggest-chip-dot"/>
+                <span className="suggest-chip-label">{s.title}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

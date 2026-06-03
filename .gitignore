@@ -30,6 +30,10 @@ env/
 # ── Runtime state ──────────────────────────────────────────────────────
 logs/
 *.log
+# Per-project action-hub store (context.md, daily logs, backups, suggestions.json)
+# created by bin/invisible-brief + the brief API under the repo root. Per-machine,
+# daemon-generated — not source. Anchored so it can't match a nested projects/ dir.
+/projects/
 worktrees/
 checkpoints/
 .invisible-checkpoint.json
