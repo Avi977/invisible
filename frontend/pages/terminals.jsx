@@ -23,13 +23,19 @@ const { useState: useStateT, useRef: useRefT, useEffect: useEffectT } = React;
 // dot, focused border, context header tint). `project_id` reserved for future
 // linkage with the Projects sidebar — null today; the daemon doesn't bind
 // panes to projects in Plan 02.
+// `project_id` links a pane to a project — when the Dashboard "Terminal"
+// button fires `navTo("terminals", "<project-id>")`, the page auto-focuses
+// the pane whose project_id matches. SSH panes resolve `id` against
+// invisible.toml [[terminals]] blocks. The matching ~/.ssh/config alias
+// decides hostname/port/identity AND any `RemoteCommand` (used here to
+// autocd into the project's VPS directory on connect).
 const PTY_PANES = [
-  { id: "local-1", title: "local · zsh",     project_color: "#5cc8ff", project_id: null },
-  { id: "local-2", title: "local · build",   project_color: "#b794ff", project_id: null },
-  { id: "local-3", title: "local · scratch", project_color: "#f5b343", project_id: null },
-  { id: "vps-srv", title: "vps · srv982719", project_color: "#4ade80", project_id: null },
-  { id: "vps-log", title: "vps · logs",      project_color: "#5ee0c8", project_id: null },
-  { id: "vps-k3s", title: "vps · k3s",       project_color: "#f56fb1", project_id: null },
+  { id: "local-1",  title: "local · zsh",            project_color: "#5cc8ff", project_id: null },
+  { id: "local-2",  title: "local · build",          project_color: "#b794ff", project_id: null },
+  { id: "local-3",  title: "local · scratch",        project_color: "#f5b343", project_id: null },
+  { id: "moto-vps", title: "vps · motorcycle-tyres", project_color: "#4ade80", project_id: "motorcycle-tyres" },
+  { id: "vps-log",  title: "vps · logs",             project_color: "#5ee0c8", project_id: null },
+  { id: "vps-k3s",  title: "vps · k3s",              project_color: "#f56fb1", project_id: null },
 ];
 
 function ContextHeader({ ctx, focused }) {

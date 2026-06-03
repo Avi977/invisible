@@ -96,15 +96,19 @@ trap cleanup INT TERM EXIT
 
 # ── Wait for ports to bind ──────────────────────────────────────────────
 wait_for_port() {
-  local port=$1 name=$2 max=20
+  # Dashboard takes ~9s to bind on first start because the Infisical
+  # bootstrap (vault.theprofitplatform.com.au) blocks the main thread
+  # until its HTTPS call times out or 403s. Give it 25s total before
+  # treating it as a failure.
+  local port=$1 name=$2 max=50
   for _ in $(seq 1 $max); do
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
       echo "  ✓ $name listening on :$port"
       return 0
     fi
-    sleep 0.25
+    sleep 0.5
   done
-  echo "  ✗ $name FAILED to bind on :$port (see $LOGDIR/$name.log)" >&2
+  echo "  ✗ $name FAILED to bind on :$port after 25s (see $LOGDIR/$name.log)" >&2
   return 1
 }
 
