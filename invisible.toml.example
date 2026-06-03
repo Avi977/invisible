@@ -109,6 +109,47 @@ id = "vps-srv"
 kind = "ssh"
 host = "srv982719"
 
+# ── Per-project SSH panes (click-to-connect from Dashboard) ─────────────
+# Pattern for projects that live on a remote host. Pair an [[terminals]]
+# block with a matching `Host <alias>` entry in ~/.ssh/config that uses
+# `RequestTTY yes` + `RemoteCommand cd <path> && exec $SHELL -l`. The
+# alias handles the autocd; the PTY daemon's argv stays locked to
+# ["ssh", host] (security note T-02-01 in lib/pty_server.py).
+#
+# Then in frontend/pages/terminals.jsx PTY_PANES, give the matching pane
+# row `project_id: "<project-name>"` so the Dashboard "Terminal" button
+# on that project card auto-focuses it.
+#
+# Worked example (motorcycle-tyres → nopCommerce shop on srv982719):
+#
+#   ~/.ssh/config:
+#     Host srv982719-moto
+#       HostName <real host or IP>
+#       Port 2222
+#       User avi
+#       IdentityFile ~/.ssh/vps_avi
+#       ControlMaster auto
+#       ControlPath ~/.ssh/cm-%r@%h:%p
+#       ControlPersist 10m
+#       RequestTTY yes
+#       RemoteCommand cd /home/avi/motorcycle_tyres && exec $SHELL -l
+#
+#   invisible.toml [[projects]]:
+#     name = "motorcycle-tyres"
+#     client = "personal"
+#     vps_repo_path = "/home/avi/motorcycle_tyres"
+#     max_iters = 3
+#     notion_id = ""
+#
+#   invisible.toml [[terminals]]:
+#     id = "moto-vps"
+#     kind = "ssh"
+#     host = "srv982719-moto"
+#
+#   frontend/pages/terminals.jsx PTY_PANES row:
+#     { id: "moto-vps", title: "vps · motorcycle-tyres",
+#       project_color: "#4ade80", project_id: "motorcycle-tyres" }
+
 # ── Calendar ────────────────────────────────────────────────────────────
 # Event sources for the Calendar page. All three are optional; if none are
 # set, /api/v1/calendar returns []. iCal URLs MUST use https:// and resolve
