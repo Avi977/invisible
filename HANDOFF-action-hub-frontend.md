@@ -25,6 +25,31 @@ and pushed:
 - **Envy branding** (same commit): sidebar eye mark + ENVY wordmark, favicon,
   title. Assets in `frontend/assets/`.
 
+## ✅ ALSO SHIPPED THIS SESSION — design import (commit `c5ababa`, pushed)
+
+Implemented the Claude Design handoff (`design/h/DqXut…`) into the real app:
+
+- **Galaxy relations** (`frontend/galaxy-data.jsx` + rewritten
+  `frontend/pages/relations.jsx`): replaced the 3d-force-graph page with the
+  design's canvas "app galaxy", wired to the LIVE `/api/v1/relations` graph.
+  `window.buildGalaxy(data)` groups real nodes by project into glowing cluster
+  cores (invisible 167 + jobslayer 36), turns modules/docs/endpoints into child
+  stars over a procedural starfield, samples noisy grep links (~140 cap).
+  Drag-orbit / scroll-dive / click-to-fly-in / focused-app isolation all work.
+- **Nerd Mode** (`frontend/nerd-mode.jsx`): live-source IDE overlay — file tree,
+  syntax highlighting, CSS hot-apply, JSX→localStorage+reload. Opened via the
+  header `{ } nerd mode` pill / sidebar `{}` / `Ctrl·Cmd+\``.
+- **VFS bootstrap** (`frontend/index.html`): the app now boots by fetching every
+  source file as text, applying localStorage overrides, and Babel-transforming
+  in ONE shared lexical scope (required for Nerd Mode live-edit). Has a
+  top-level error guard. ⚠️ **Because all files share one scope, every new
+  top-level identifier in `frontend/**.jsx` must be globally unique** — this
+  session had to dedupe `API_BASE`/`getToken`/`fmtH` collisions the old
+  static-`<script>` loader had hidden.
+
+All verified in Playwright: clean boot (0 console errors), all 8 pages render,
+galaxy + nerd mode + action-hub chips + Envy branding all working together.
+
 Everything below is the ORIGINAL plan, kept for reference only.
 
 ---
