@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# invisible-quit — kill the 3 invisible daemons (dashboard / frontend / PTY)
+# regardless of how they were started. Idempotent.
+
+set -euo pipefail
+
+PORTS=(8765 8090 8091)
+NAMES=(dashboard frontend pty)
+
+killed=0
+for i in 0 1 2; do
+  port="${PORTS[$i]}"
+  name="${NAMES[$i]}"
+  pid="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F p 2>/dev/null | head -1 | sed 's/^p//')"
+  if [ -n "${pid:-}" ]; then
+    echo "▶ Killing $name (pid $pid on :$port)"
+    kill "$pid" 2>/dev/null || true
+    killed=$((killed + 1))
+  fi
+done
+
+# Also catch by name in case ports got reused
+pkill -f "invisible-(dashboard|frontend|pty)" 2>/dev/null || true
+
+if [ $killed -eq 0 ]; then
+  echo "No invisible daemons currently running on :8765 / :8090 / :8091."
+else
+  sleep 1
+  echo "Done. ($killed daemons stopped)"
+fi

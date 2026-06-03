@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# invisible-launch — start all 3 daemons, open the browser frontend,
+# wait until Ctrl-C, then kill all daemons cleanly.
+#
+# This is the recommended "daily use" entry point: one command, one
+# foreground terminal, predictable shutdown.
+#
+# Why this exists: the Tauri shell (Invisible.app) currently bundles a
+# frontend-vite/ build that has NOT been wired to the backend yet — it
+# shows mock data. The legacy frontend/ (Babel-standalone) was wired by
+# the M1 + M2 workstreams and serves real data via bin/invisible-frontend
+# at http://127.0.0.1:8090/. This launcher gives you the working app in
+# your default browser with the same one-click feel as the .app.
+#
+# Usage:
+#   bin/invisible-launch              # daemons + open browser
+#   bin/invisible-launch --no-browser # daemons only (you open manually)
+#   bin/invisible-launch --port 8090  # change frontend port (also affects PTY/dashboard? no — those stay)
+#
+# Exit: Ctrl-C; trap kills all spawned daemons.
+
+set -euo pipefail
+
+# ── Config ──────────────────────────────────────────────────────────────
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INVISIBLE_HOME="${INVISIBLE_HOME:-$ROOT}"
+export INVISIBLE_HOME
+
+FRONTEND_PORT=8090
+DASHBOARD_PORT=8765
+PTY_PORT=8091
+OPEN_BROWSER=true
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-browser) OPEN_BROWSER=false ;;
+    --port) FRONTEND_PORT="$2"; shift ;;
+    -h|--help)
+      sed -n '2,18p' "$0" | sed 's/^# //;s/^#//'
+      exit 0
+      ;;
+    *) echo "invisible-launch: unknown arg: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+LOGDIR="$INVISIBLE_HOME/logs"
+mkdir -p "$LOGDIR"
+
+# ── Pre-flight ──────────────────────────────────────────────────────────
+for port in "$DASHBOARD_PORT" "$PTY_PORT" "$FRONTEND_PORT"; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    pid="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F p 2>/dev/null | head -1 | sed 's/^p//')"
+    echo "invisible-launch: port $port already in use (pid $pid)." >&2
+    echo "  Run \`bin/invisible-quit\` first, or kill the process." >&2
+    exit 1
+  fi
+done
+
+echo "▶ Starting daemons (INVISIBLE_HOME=$INVISIBLE_HOME)"
+echo "  · dashboard  → 127.0.0.1:$DASHBOARD_PORT  (--no-auth)"
+echo "  · frontend   → 127.0.0.1:$FRONTEND_PORT"
+echo "  · PTY        → 127.0.0.1:$PTY_PORT"
+echo "  Logs: $LOGDIR/{dashboard,frontend,pty}.log"
+echo ""
+
+# ── Spawn daemons ───────────────────────────────────────────────────────
+"$ROOT/bin/invisible-dashboard" --no-auth >"$LOGDIR/dashboard.log" 2>&1 &
+DASH_PID=$!
+
+"$ROOT/bin/invisible-frontend" --port "$FRONTEND_PORT" >"$LOGDIR/frontend.log" 2>&1 &
+FRONT_PID=$!
+
+"$ROOT/bin/invisible-pty" --port "$PTY_PORT" >"$LOGDIR/pty.log" 2>&1 &
+PTY_PID=$!
+
+# ── Cleanup on exit ─────────────────────────────────────────────────────
+cleanup() {
+  echo ""
+  echo "▶ Stopping daemons..."
+  for pid in "$DASH_PID" "$FRONT_PID" "$PTY_PID"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  # Give them a moment to clean up, then SIGKILL stragglers
+  sleep 1
+  for pid in "$DASH_PID" "$FRONT_PID" "$PTY_PID"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+  echo "  done."
+}
+trap cleanup INT TERM EXIT
+
+# ── Wait for ports to bind ──────────────────────────────────────────────
+wait_for_port() {
+  local port=$1 name=$2 max=20
+  for _ in $(seq 1 $max); do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "  ✓ $name listening on :$port"
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "  ✗ $name FAILED to bind on :$port (see $LOGDIR/$name.log)" >&2
+  return 1
+}
+
+wait_for_port "$DASHBOARD_PORT" dashboard || exit 1
+wait_for_port "$FRONTEND_PORT"  frontend  || exit 1
+wait_for_port "$PTY_PORT"       pty       || exit 1
+
+echo ""
+echo "▶ App ready at: http://127.0.0.1:$FRONTEND_PORT/"
+if [ "$OPEN_BROWSER" = true ]; then
+  if command -v open >/dev/null 2>&1; then
+    open "http://127.0.0.1:$FRONTEND_PORT/"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "http://127.0.0.1:$FRONTEND_PORT/"
+  fi
+fi
+echo "  Press Ctrl-C to stop daemons and exit."
+echo ""
+
+# ── Wait forever (or until any daemon dies) ─────────────────────────────
+while true; do
+  for pid in "$DASH_PID" "$FRONT_PID" "$PTY_PID"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "⚠ Daemon pid $pid died — see logs/. Shutting down." >&2
+      exit 1
+    fi
+  done
+  sleep 5
+done
