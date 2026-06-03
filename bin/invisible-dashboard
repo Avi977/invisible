@@ -404,6 +404,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             tools.handle_get(self)
             return
 
+        # ── Per-project brief — GET /api/v1/projects/<id>/brief ─────────
+        # Path-param routing (project_id is variable), so this can't live
+        # in the exact-match ROUTES dict in lib/api/__init__.py.
+        if path.startswith("/api/v1/projects/") and path.endswith("/brief"):
+            project_id = path[len("/api/v1/projects/"):-len("/brief")]
+            from api import brief as brief_api
+            brief_api.handle_brief_get(self, project_id)
+            return
+
         self._send_text("not found\n", 404)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
@@ -484,6 +493,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/v1/chat":
                 status, body = chat_handler(payload)
                 self._send_json(body, status)
+                return
+            # Per-project log append — POST /api/v1/projects/<id>/log.
+            # Path-param routing; we hand the already-parsed payload to the
+            # brief module so it doesn't have to re-read rfile.
+            if path.startswith("/api/v1/projects/") and path.endswith("/log"):
+                project_id = path[len("/api/v1/projects/"):-len("/log")]
+                from api import brief as brief_api
+                brief_api.handle_log_post(self, project_id, payload)
                 return
             # Unknown POST path → 404. The new method must not swallow paths
             # the existing GET handler is responsible for.

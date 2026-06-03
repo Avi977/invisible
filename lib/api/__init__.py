@@ -26,6 +26,7 @@ from . import analytics   # noqa: F401  (analytics: GET /api/v1/analytics)
 from . import relations   # noqa: F401  (relations: GET /api/v1/relations)
 from . import calendar    # noqa: F401  (calendar: GET /api/v1/calendar)
 from . import tools       # noqa: F401  (tools: GET/PUT/DELETE /api/v1/tools — dispatched per-method by invisible-dashboard)
+from . import brief       # noqa: F401  (brief: GET /api/v1/projects/<id>/brief, POST /api/v1/projects/<id>/log — path-param dispatch in invisible-dashboard)
 
 # Path → handler callable. Sister workstreams add their entries below this line.
 ROUTES: dict = {
@@ -34,4 +35,4 @@ ROUTES: dict = {
     "/api/v1/calendar": calendar.handle_calendar,
 }
 
-__all__ = ["ROUTES", "projects", "chat", "tree_local", "tree_vps", "tree_repo", "analytics", "relations", "calendar", "tools"]
+__all__ = ["ROUTES", "projects", "chat", "tree_local", "tree_vps", "tree_repo", "analytics", "relations", "calendar", "tools", "brief"]

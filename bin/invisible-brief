@@ -1,0 +1,386 @@
+#!/usr/bin/env python3
+"""invisible-brief — generate per-project action suggestions via claude -p.
+
+For each project in invisible.toml, gathers:
+  • current context.md (cumulative project understanding)
+  • last 7 days of daily logs
+  • last 20 git commits (if repo_path set + reachable)
+  • last 5 Notion review summaries (if notion_id set and reachable)
+
+…feeds them to `claude -p --model claude-sonnet-4-6 --output-format json`
+with a constrained prompt that asks for 3-5 actionable next steps as JSON,
+parses the result, and writes them to
+~/.invisible/projects/<name>/suggestions.json (atomic).
+
+Usage:
+  bin/invisible-brief                   # all projects (parallel)
+  bin/invisible-brief --project NAME    # one project
+  bin/invisible-brief --quiet           # no per-project progress lines
+  bin/invisible-brief --timeout 60      # per-project Claude timeout (sec)
+
+Exit code: 0 on success (some projects may have failed individually — they
+log a warning but don't fail the whole run); 1 on global setup failure
+(no claude CLI, no invisible.toml, etc).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import tomllib
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+# Make the local lib/ importable when run from bin/.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from lib import project_store  # noqa: E402
+
+
+# ── Config helpers ─────────────────────────────────────────────────────
+
+
+def load_projects() -> tuple[list[dict], Path]:
+    """Read invisible.toml; return (projects list, path to invisible.toml).
+
+    Honors INVISIBLE_HOME the same way the rest of the codebase does.
+    """
+    invisible_home = Path(os.environ.get("INVISIBLE_HOME", "~/.invisible")).expanduser()
+    config_path = invisible_home / "invisible.toml"
+    if not config_path.exists():
+        print(f"[brief] no invisible.toml at {config_path}", file=sys.stderr)
+        return [], config_path
+    with config_path.open("rb") as f:
+        cfg = tomllib.load(f)
+    return cfg.get("projects", []), config_path
+
+
+def gather_git_log(repo_path: Path | None, *, n: int = 20) -> str:
+    """Return the most recent `n` commit summaries from repo_path, or ""."""
+    if not repo_path:
+        return ""
+    p = repo_path.expanduser()
+    if not (p / ".git").exists():
+        return ""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(p), "log", f"-{n}", "--oneline", "--no-color"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return out.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return ""
+
+
+def gather_git_status(repo_path: Path | None) -> str:
+    """Return `git status --short --branch` for repo_path, or ""."""
+    if not repo_path:
+        return ""
+    p = repo_path.expanduser()
+    if not (p / ".git").exists():
+        return ""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(p), "status", "--short", "--branch"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return out.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return ""
+
+
+# ── Prompt assembly ────────────────────────────────────────────────────
+
+BRIEF_PROMPT_TEMPLATE = """\
+You are generating a daily "next actions" brief for one specific software
+project I'm working on. I want CONCRETE, RUNNABLE next steps — not generic
+advice.
+
+# Project: {name}
+{vps_note}{repo_note}
+
+# Cumulative context (my own notes — may be empty if I haven't written it yet)
+{context_section}
+
+# Recent activity log (last 7 days — may be empty)
+{log_section}
+
+# Git status (working tree right now)
+```
+{git_status}
+```
+
+# Recent commits (last 20)
+```
+{git_log}
+```
+
+---
+
+Given that context, suggest 3-5 concrete next actions I should take today.
+Each action must include:
+  • title   — short imperative phrase (≤60 chars)
+  • command — a SHELL COMMAND I could literally paste into a terminal in
+              the project root. Single line. No shell metacharacters that
+              require explanation. If the action is "review something",
+              the command should open it (e.g., `git log -p -10`, `cat
+              README.md`, `code .`, etc.) — never a no-op or pseudocode.
+  • why     — 1 short sentence explaining the value (≤150 chars)
+  • risk    — "low" / "medium" / "high". Mark anything that mutates the
+              repo or deploys to production "medium" or "high".
+
+Return ONLY a JSON array (no markdown fences, no prose). Schema:
+[
+  {{"title": "...", "command": "...", "why": "...", "risk": "low"}},
+  ...
+]
+
+Prioritize actions that build on the recent activity. If git is dirty,
+the FIRST action should usually be reviewing or committing the WIP.
+If the log shows a stalled task, suggest the next concrete step to
+unblock it.
+"""
+
+
+def build_prompt(
+    project: dict,
+    *,
+    context: str,
+    recent_log: str,
+    git_log: str,
+    git_status: str,
+) -> str:
+    """Build the user prompt for `claude -p`."""
+    name = project.get("name", "<unnamed>")
+    repo_path = project.get("repo_path", "")
+    vps_repo = project.get("vps_repo_path", "")
+    repo_note = ""
+    if repo_path:
+        repo_note = f"Local repo: `{repo_path}`\n"
+    vps_note = ""
+    if vps_repo:
+        vps_note = f"VPS repo: `srv982719:{vps_repo}` (work happens over SSH)\n"
+    context_section = context.strip() or "(empty — I haven't written context yet)"
+    log_section = recent_log.strip() or "(empty — no activity logged yet)"
+    if len(context_section) > 8000:
+        context_section = context_section[-8000:] + "\n[...truncated head...]"
+    if len(log_section) > 8000:
+        log_section = log_section[-8000:] + "\n[...truncated head...]"
+    return BRIEF_PROMPT_TEMPLATE.format(
+        name=name,
+        repo_note=repo_note,
+        vps_note=vps_note,
+        context_section=context_section,
+        log_section=log_section,
+        git_status=(git_status or "(no local repo / not configured)").strip(),
+        git_log=(git_log or "(no local repo / not configured)").strip(),
+    )
+
+
+# ── claude -p invocation ──────────────────────────────────────────────
+
+
+def claude_p(prompt: str, *, model: str, timeout: int) -> tuple[bool, str]:
+    """Run `claude -p --model <model> --output-format json` with `prompt` on stdin.
+
+    Returns (ok, response_text). `response_text` is the assistant's reply
+    text (NOT the surrounding JSON envelope), or the error message on
+    failure.
+    """
+    cmd = [
+        "claude",
+        "-p",
+        "--model", model,
+        "--output-format", "json",
+        prompt,
+    ]
+    try:
+        r = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"claude -p timed out after {timeout}s"
+    except FileNotFoundError:
+        return False, "claude CLI not on PATH"
+    if r.returncode != 0:
+        return False, f"claude -p exit {r.returncode}: {r.stderr.strip()[:200]}"
+    # Parse the JSON envelope to extract the assistant text. The envelope
+    # shape from claude -p --output-format json is:
+    #   {"type": "result", "result": "<text>", ...}
+    try:
+        env = json.loads(r.stdout)
+        text = env.get("result") or env.get("text") or ""
+        if not text:
+            return False, f"claude -p response had no result field: {r.stdout[:200]}"
+        return True, text
+    except json.JSONDecodeError:
+        return False, f"claude -p returned non-JSON: {r.stdout[:200]}"
+
+
+def parse_suggestions(response_text: str) -> list[dict]:
+    """Extract the JSON array of suggestions from the assistant's reply.
+
+    The prompt says "return ONLY a JSON array" but the model sometimes
+    wraps it in ```json ... ``` fences or prefaces it with prose. Try
+    several extraction strategies before giving up.
+    """
+    s = response_text.strip()
+    # Strip common markdown fence prefixes/suffixes
+    if s.startswith("```"):
+        # ```json\n[...]\n```
+        s = s.split("\n", 1)[1] if "\n" in s else s
+        if s.endswith("```"):
+            s = s.rsplit("```", 1)[0]
+    s = s.strip()
+    # Direct parse
+    try:
+        v = json.loads(s)
+        if isinstance(v, list):
+            return v
+    except json.JSONDecodeError:
+        pass
+    # Fallback: find the first '[' ... last ']' and parse that slice
+    lo = s.find("[")
+    hi = s.rfind("]")
+    if lo >= 0 and hi > lo:
+        try:
+            v = json.loads(s[lo:hi + 1])
+            if isinstance(v, list):
+                return v
+        except json.JSONDecodeError:
+            pass
+    return []
+
+
+# ── Per-project work ───────────────────────────────────────────────────
+
+
+def brief_one(project: dict, *, model: str, timeout: int, quiet: bool) -> tuple[str, bool, str]:
+    """Generate suggestions.json for one project. Returns (name, ok, message)."""
+    name = project.get("name", "")
+    if not name:
+        return ("<unnamed>", False, "no `name` in invisible.toml entry")
+    repo_path_str = project.get("repo_path", "")
+    repo_path = Path(repo_path_str) if repo_path_str else None
+    git_log = gather_git_log(repo_path)
+    git_status = gather_git_status(repo_path)
+    context = project_store.read_context(name)
+    recent_log = project_store.read_recent_logs(name, days=7)
+    prompt = build_prompt(
+        project,
+        context=context,
+        recent_log=recent_log,
+        git_log=git_log,
+        git_status=git_status,
+    )
+    t0 = time.time()
+    if not quiet:
+        print(f"  [brief] {name}: calling claude (model={model})…")
+    ok, response = claude_p(prompt, model=model, timeout=timeout)
+    dt = time.time() - t0
+    if not ok:
+        return (name, False, f"{response} (after {dt:.1f}s)")
+    suggestions = parse_suggestions(response)
+    if not suggestions:
+        return (name, False, f"claude reply had no parseable suggestions (after {dt:.1f}s)")
+    project_store.write_suggestions(name, suggestions)
+    return (name, True, f"{len(suggestions)} suggestions in {dt:.1f}s")
+
+
+# ── CLI ────────────────────────────────────────────────────────────────
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Generate per-project action briefs via claude -p.")
+    ap.add_argument(
+        "--project",
+        help="Only brief this project (matches `name` in invisible.toml).",
+    )
+    ap.add_argument(
+        "--model",
+        default="claude-sonnet-4-6",
+        help="Model passed to claude -p (default: claude-sonnet-4-6).",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="Per-project claude -p timeout in seconds (default: 60).",
+    )
+    ap.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-project progress lines (final summary still prints).",
+    )
+    ap.add_argument(
+        "--max-parallel",
+        type=int,
+        default=4,
+        help="Maximum number of projects to brief in parallel (default: 4).",
+    )
+    args = ap.parse_args()
+
+    projects, cfg_path = load_projects()
+    if not projects:
+        print(f"[brief] no projects found in {cfg_path} — nothing to do.", file=sys.stderr)
+        return 1
+
+    if args.project:
+        projects = [p for p in projects if p.get("name") == args.project]
+        if not projects:
+            print(f"[brief] project {args.project!r} not in {cfg_path}", file=sys.stderr)
+            return 1
+
+    if not args.quiet:
+        print(f"[brief] {len(projects)} project(s) → {model_summary(args.model)} (timeout {args.timeout}s)")
+
+    results: list[tuple[str, bool, str]] = []
+    with ThreadPoolExecutor(max_workers=max(1, args.max_parallel)) as ex:
+        futures = {
+            ex.submit(brief_one, p, model=args.model, timeout=args.timeout, quiet=args.quiet): p
+            for p in projects
+        }
+        for fut in as_completed(futures):
+            results.append(fut.result())
+
+    failed = [r for r in results if not r[1]]
+    succeeded = [r for r in results if r[1]]
+
+    if not args.quiet or failed:
+        print()
+        print(f"[brief] done — {len(succeeded)} ok, {len(failed)} failed")
+        for name, ok, msg in sorted(results):
+            mark = "✓" if ok else "✗"
+            print(f"  {mark} {name}: {msg}")
+
+    # Always exit 0 — per-project failures shouldn't break a launchctl /
+    # cron job that briefs all projects. The user can see which failed in
+    # the output.
+    return 0
+
+
+def model_summary(model: str) -> str:
+    if "haiku" in model:
+        return f"{model} (fast)"
+    if "opus" in model:
+        return f"{model} (best quality)"
+    return f"{model}"
+
+
+if __name__ == "__main__":
+    sys.exit(main())
