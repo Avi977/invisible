@@ -339,10 +339,11 @@ def _keepalive_bytes() -> bytes:
 def _send_sse_headers(handler: Any) -> None:
     """Emit the SSE response header block.
 
-    Cross-origin CORS headers (``Access-Control-Allow-Origin: *`` etc.)
-    are supplied by the dashboard handler's ``end_headers()`` override —
-    do NOT add them here; duplicate ACAO headers are rejected by the CORS
-    spec, breaking the EventSource subscription from the frontend on :8090.
+    Cross-origin CORS headers are emitted via the handler's
+    ``_cors_headers()`` helper — the SAME single-source loopback-only
+    Origin-echo path that ``_send_json``/``_send_text``/``_send_html``
+    use. Calling ``_cors_headers()`` before ``end_headers()`` keeps the
+    SSE response on the same CORS contract as every other JSON route.
 
     ``X-Accel-Buffering: no`` defeats nginx's response buffering for any
     future proxy in front of the daemon.
@@ -352,6 +353,8 @@ def _send_sse_headers(handler: Any) -> None:
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("Connection", "keep-alive")
     handler.send_header("X-Accel-Buffering", "no")
+    if hasattr(handler, "_cors_headers"):
+        handler._cors_headers()
     handler.end_headers()
 
 

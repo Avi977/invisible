@@ -278,8 +278,7 @@ const TERM_CONTEXT = {
 // GET /api/v1/analytics from the dashboard daemon. See
 // lib/api/analytics.py and frontend/pages/analytics.jsx.
 
-Object.assign(window, { ANALYTICS });
-Object.assign(window, { DATA_SETS, FOLDERS, TOOL_WORKFLOWS, TERM_CONTEXT });
+Object.assign(window, { DATA_SETS, FOLDERS, TERM_CONTEXT });
 
 // ── Real-data fetchers (M1 wiring) ─────────────────────────────────
 const API_BASE = "http://127.0.0.1:8765";
