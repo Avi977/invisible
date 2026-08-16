@@ -1,0 +1,6 @@
+[submodule "vendor/openwhispr"]
+	path = vendor/openwhispr
+	url = https://github.com/OpenWhispr/openwhispr.git
+[submodule "vendor/hermes-agent"]
+	path = vendor/hermes-agent
+	url = https://github.com/NousResearch/hermes-agent.git

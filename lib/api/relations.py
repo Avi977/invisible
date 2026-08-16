@@ -233,6 +233,18 @@ def _project_root(slug: str) -> Path | None:
     name (e.g. "jobslayer"), not a basename under home. The actual
     repo_path lives wherever the user configured it in invisible.toml.
     """
+    try:
+        cfg = config.load_toml()
+    except Exception:  # noqa: BLE001
+        cfg = {}
+    proj = next(
+        (p for p in cfg.get("projects", []) or [] if p.get("name") == slug),
+        None,
+    )
+    if proj is not None:
+        resolved = _safe_resolve(proj.get("repo_path", ""))
+        if resolved is not None:
+            return resolved
     if slug == "invisible":
         try:
             # .resolve() so downstream is_relative_to() comparisons against
@@ -240,19 +252,9 @@ def _project_root(slug: str) -> Path | None:
             # through a symlink, unresolved root + resolved candidates would
             # silently mismatch and drop every import edge (review WR-02).
             return config.home().resolve()
-        except Exception:  # noqa: BLE001 — never crash the handler on home() failure
+        except Exception:  # noqa: BLE001
             return None
-    try:
-        cfg = config.load_toml()
-    except Exception:  # noqa: BLE001
-        return None
-    proj = next(
-        (p for p in cfg.get("projects", []) if p.get("name") == slug),
-        None,
-    )
-    if proj is None:
-        return None
-    return _safe_resolve(proj.get("repo_path", ""))
+    return None
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -905,6 +907,21 @@ def build_graph(project: str | None) -> dict:
         if root is None:
             graph = {"nodes": [], "edges": []}
         else:
+            try:
+                from api import graphify_local
+
+                graphify_graph = graphify_local.load_graph(project)
+                if graphify_graph:
+                    graph = graphify_local.normalize_graph(graphify_graph, project)
+                    if graph.get("nodes"):
+                        _evict_one_if_full()
+                        _CACHE[key] = (time.time() + _CACHE_TTL_S, graph)
+                        return graph
+            except Exception:  # noqa: BLE001
+                # Graphify is optional. Fall back to the built-in static
+                # derivers if its output is missing or malformed.
+                pass
+
             mod_nodes, imp_edges = _derive_import_edges(root, project)
             module_ids: set[str] = {n["id"] for n in mod_nodes}
             doc_nodes, grep_edges = _derive_grep_edges(

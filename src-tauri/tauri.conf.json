@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Invisible",
+  "productName": "Envy",
   "version": "0.1.0",
   "identifier": "com.theprofitplatform.invisible",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Invisible",
+        "title": "Envy",
         "width": 1200,
         "height": 800,
         "minWidth": 700,
@@ -46,9 +46,14 @@
       "icons/icon.ico"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "Personal multi-agent dev cockpit",
-    "longDescription": "Native Tauri shell for the invisible cockpit. Loads the Vite-bundled React UI; bridges the invisible-dashboard event stream to the frontend.",
+    "shortDescription": "Local AI agent cockpit",
+    "longDescription": "Native Tauri shell for Envy, the local Invisible agent cockpit. Loads the Vite-bundled React UI and starts the local dashboard backend when needed.",
     "publisher": "The Profit Platform",
+    "resources": [
+      "../bin",
+      "../lib",
+      "../invisible.toml.example"
+    ],
     "windows": {
       "wix": {
         "language": [

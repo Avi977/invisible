@@ -335,10 +335,10 @@ function previewFor(kind) {
 // ── Mini terminal ──────────────────────────────────────────────────────────
 function MiniTerm({ project, color }) {
   const [lines, setLines] = useState([
-    { t: "prompt", c: "git status", path: `~/code/${project}` },
-    { t: "ok",     c: "On branch main · clean" },
-    { t: "prompt", c: `pnpm dev`, path: `~/code/${project}` },
-    { t: "ok",     c: "▲ ready · :3000" },
+    { t: "prompt", c: "git status", path: `C:\\Users\\mahar\\repos\\${project}` },
+    { t: "ok",     c: "On branch main - clean" },
+    { t: "prompt", c: `corepack pnpm dev`, path: `C:\\Users\\mahar\\repos\\${project}` },
+    { t: "ok",     c: "ready - http://127.0.0.1:3000" },
   ]);
   const [input, setInput] = useState("");
   const bodyRef = useRef(null);
@@ -349,14 +349,15 @@ function MiniTerm({ project, color }) {
   const run = (cmd) => {
     if (!cmd.trim()) return;
     const lower = cmd.trim().toLowerCase();
-    if (lower === "clear") { setLines([]); setInput(""); return; }
-    const cmdLine = { t: "prompt", c: cmd, path: `~/code/${project}` };
+    if (["clear", "cls", "clear-host"].includes(lower)) { setLines([]); setInput(""); return; }
+    const cmdLine = { t: "prompt", c: cmd, path: `C:\\Users\\mahar\\repos\\${project}` };
     let out;
-    if (lower.startsWith("ls"))   out = [{ t: "dim", c: "src/  package.json  README.md  .env.local" }];
-    else if (lower.startsWith("pwd")) out = [{ t: "dim", c: `~/code/${project}` }];
-    else if (lower.startsWith("git")) out = [{ t: "ok", c: "On branch main · clean" }];
+    if (lower.startsWith("get-childitem") || lower === "dir" || lower === "ls") out = [{ t: "dim", c: "src  package.json  README.md  .env.local" }];
+    else if (lower.startsWith("get-location") || lower === "pwd") out = [{ t: "dim", c: `C:\\Users\\mahar\\repos\\${project}` }];
+    else if (lower.startsWith("git")) out = [{ t: "ok", c: "On branch main - clean" }];
     else if (lower.startsWith("echo ")) out = [{ t: "dim", c: cmd.slice(5) }];
-    else out = [{ t: "err", c: `command not found: ${cmd.split(" ")[0]}` }];
+    else if (lower.startsWith("write-output ")) out = [{ t: "dim", c: cmd.slice("write-output ".length) }];
+    else out = [{ t: "err", c: `CommandNotFoundException: ${cmd.split(" ")[0]}` }];
     setLines(l => [...l, cmdLine, ...out]);
     setInput("");
   };
@@ -365,20 +366,20 @@ function MiniTerm({ project, color }) {
     <div className="focus-term" onClick={() => inputRef.current?.focus()} style={{ "--p-c": color }}>
       <div className="focus-term-head">
         <div className="term-dots"><div className="term-dot r"/><div className="term-dot y"/><div className="term-dot g"/></div>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)" }}>{project} · zsh</span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)" }}>{project} - PowerShell</span>
         <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--p-c)" }}>● live</span>
       </div>
       <div className="focus-term-body" ref={bodyRef}>
         {lines.map((ln, i) => (
           <div key={i}>
             {ln.t === "prompt"
-              ? <><span style={{ color: "var(--c-fold)" }}>{ln.path}</span>{" "}<span style={{ color: "var(--p-c)" }}>$</span> {ln.c}</>
+              ? <><span style={{ color: "var(--c-fold)" }}>{ln.path}</span>{" "}<span style={{ color: "var(--p-c)" }}>PS&gt;</span> {ln.c}</>
               : <span className={ln.t}>{ln.c}</span>}
           </div>
         ))}
         <div>
-          <span style={{ color: "var(--c-fold)" }}>~/code/{project}</span>{" "}
-          <span style={{ color: "var(--p-c)" }}>$</span>{" "}
+          <span style={{ color: "var(--c-fold)" }}>C:\Users\mahar\repos\{project}</span>{" "}
+          <span style={{ color: "var(--p-c)" }}>PS&gt;</span>{" "}
           <input
             ref={inputRef}
             className="term-input"

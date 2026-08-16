@@ -39,18 +39,18 @@ try:
     from websockets.exceptions import ConnectionClosed
     from websockets.http11 import Response
     from websockets.datastructures import Headers
-    import ptyprocess
-    from ptyprocess import PtyProcess
 except ImportError as _e:  # pragma: no cover — surfaced at process startup
     raise SystemExit(
         f"[invisible-pty] missing dependency ({_e.name}): "
-        "run `python3 -m pip install --user websockets ptyprocess`"
+        "run `python -m pip install --user websockets`"
     ) from _e
 
 import asyncio
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tomllib
 from datetime import datetime, timezone
@@ -65,6 +65,30 @@ if str(HERE) not in sys.path:
 import checkpoint  # noqa: E402 — same-dir module, post sys.path insert
 from config import home  # noqa: E402
 
+try:
+    import ptyprocess
+    from ptyprocess import PtyProcess
+except ImportError:  # pragma: no cover - Windows pipe fallback does not need it
+    ptyprocess = None
+    PtyProcess = Any  # type: ignore[misc, assignment]
+
+try:
+    import winpty
+    from winpty import PtyProcess as WinPtyProcess
+except ImportError:  # pragma: no cover - non-Windows and old installs
+    winpty = None
+    WinPtyProcess = None  # type: ignore[assignment]
+
+PTY_ERRORS = tuple(
+    e for e in (
+        ptyprocess.PtyProcessError if ptyprocess is not None else None,
+        winpty.WinptyError if winpty is not None else None,
+    )
+    if e is not None
+)
+PROCESS_READ_ERRORS = (EOFError, OSError, *PTY_ERRORS)
+PROCESS_WRITE_ERRORS = (OSError, *PTY_ERRORS)
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Module constants — the threat-model surface.
@@ -74,6 +98,7 @@ from config import home  # noqa: E402
 # whitespace, uppercase, anything >32 chars. Match against the raw URL-decoded
 # segment before any PTY spawn or checkpoint read.
 PANE_ID_RE: re.Pattern[str] = re.compile(r"^[a-z0-9_-]{1,32}$")
+RESIZE_CONTROL_RE: re.Pattern[str] = re.compile(r"^\x1b]777;resize;(\d{1,4});(\d{1,4})\x07$")
 
 # Origin pinning. T-01-02 DNS-rebinding defence: WebSocket upgrades whose
 # Origin is not in this set are rejected with HTTP 403 *before* upgrade.
@@ -86,6 +111,8 @@ PANE_ID_RE: re.Pattern[str] = re.compile(r"^[a-z0-9_-]{1,32}$")
 ALLOWED_ORIGINS: set[str] = {
     "http://127.0.0.1:8090",
     "http://localhost:8090",
+    "http://127.0.0.1:5174",
+    "http://localhost:5174",
 }
 _extra_origins_raw = os.environ.get("INVISIBLE_PTY_EXTRA_ORIGINS", "").strip()
 if _extra_origins_raw:
@@ -101,8 +128,34 @@ ALLOWED_HOSTS: set[str] = {"127.0.0.1", "localhost", "::1"}
 # Concurrent-PTY cap. T-01-04 DoS defence: reject new spawns at the cap.
 MAX_CONCURRENT_PTYS: int = 32
 
-# Shell to launch inside each PTY. Mirrors the user's interactive shell.
+# Shell to launch inside each terminal.
+IS_WINDOWS: bool = os.name == "nt"
+POWERSHELL_CANDIDATES: tuple[str, ...] = (
+    "powershell.exe",
+    "powershell",
+    "pwsh.exe",
+    "pwsh",
+)
 DEFAULT_SHELL: str = os.environ.get("SHELL", "/bin/bash")
+
+
+def default_shell_kind() -> str:
+    return "powershell" if IS_WINDOWS else "bash"
+
+
+def default_shell_command() -> list[str]:
+    if IS_WINDOWS:
+        shell = next((path for s in POWERSHELL_CANDIDATES if (path := shutil.which(s))), "powershell.exe")
+        return [shell, "-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass"]
+    return [DEFAULT_SHELL, "-i"]
+
+
+def resize_pty(proc: Any, cols: int, rows: int) -> None:
+    cols = max(20, min(int(cols), 300))
+    rows = max(5, min(int(rows), 120))
+    resize = getattr(proc, "setwinsize", None)
+    if callable(resize):
+        resize(rows, cols)
 
 # ────────────────────────────────────────────────────────────────────────
 # Plan 02 — session-persistence constants.
@@ -172,7 +225,7 @@ def check_origin(origin: str | None) -> bool:
 
 # Per-pane env values must be strings — TOML naturally produces strings for
 # string-typed scalars, but a user could write `FOO = 42` and we'd refuse.
-_ALLOWED_KINDS: set[str] = {"bash", "ssh"}
+_ALLOWED_KINDS: set[str] = {"bash", "powershell", "ssh"}
 
 
 def load_pane_configs(path: Path | str) -> dict[str, dict[str, Any]]:
@@ -332,7 +385,7 @@ def resolve_command(config: dict[str, Any]) -> list[str]:
     `load_pane_configs` validates): fall back to bash. This keeps any caller
     that hands in a hand-built dict (e.g., a unit test) from raising.
     """
-    kind = config.get("kind", "bash")
+    kind = config.get("kind", default_shell_kind())
     if kind == "ssh":
         host = config.get("host")
         if not isinstance(host, str) or not host.strip():
@@ -344,12 +397,58 @@ def resolve_command(config: dict[str, Any]) -> list[str]:
     cmd = config.get("command")
     if isinstance(cmd, list) and cmd and all(isinstance(s, str) for s in cmd):
         return list(cmd)
-    return [DEFAULT_SHELL, "-i"]
+    if kind == "bash":
+        return [DEFAULT_SHELL, "-i"]
+    return default_shell_command()
 
 
 # ────────────────────────────────────────────────────────────────────────
 # PTY spawn helper + in-memory registry.
 # ────────────────────────────────────────────────────────────────────────
+
+class WindowsShellProcess:
+    """Small subprocess adapter exposing the PtyProcess methods we use."""
+
+    def __init__(
+        self,
+        argv: list[str],
+        *,
+        cwd: str | None,
+        env: dict | None,
+    ) -> None:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        self.proc = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            creationflags=creationflags,
+        )
+
+    def read(self, size: int) -> bytes:
+        if self.proc.stdout is None:
+            raise EOFError
+        chunk = self.proc.stdout.read(size)
+        if not chunk:
+            raise EOFError
+        return chunk
+
+    def write(self, data: bytes) -> None:
+        if self.proc.stdin is None:
+            raise OSError("stdin closed")
+        self.proc.stdin.write(data)
+        self.proc.stdin.flush()
+
+    def terminate(self, force: bool = False) -> None:
+        if self.proc.poll() is not None:
+            return
+        if force:
+            self.proc.kill()
+        else:
+            self.proc.terminate()
 
 
 def spawn_pty(
@@ -378,8 +477,19 @@ def spawn_pty(
     — this helper does not consult the registry. PTYServer.handle_pty does
     the count check before calling spawn_pty().
     """
-    argv = list(command) if command else [DEFAULT_SHELL, "-i"]
+    argv = list(command) if command else default_shell_command()
     proc_env = env if env is not None else dict(os.environ)
+    if IS_WINDOWS:
+        if WinPtyProcess is not None:
+            return WinPtyProcess.spawn(
+                argv,
+                cwd=cwd,
+                env=proc_env,
+                dimensions=dimensions,
+            )  # type: ignore[return-value]
+        raise RuntimeError("pywinpty is required for real Windows PTY support")
+    if ptyprocess is None:
+        raise RuntimeError("ptyprocess is required for POSIX PTY support")
     return PtyProcess.spawn(
         argv,
         cwd=cwd,
@@ -409,7 +519,7 @@ def spawn_pty_for_config(
     """
     # Default fall-through: an empty dict ⇒ bash.
     if "kind" not in config:
-        config = {**config, "kind": "bash"}
+        config = {**config, "kind": default_shell_kind()}
 
     argv = resolve_command(config)
 
@@ -901,10 +1011,9 @@ class PTYServer:
                 await websocket.close(code=1013, reason="pty cap reached")
                 return
 
-            # Per-pane config. Task 2 swaps this for `spawn_pty_for_config`;
-            # for the Task 1 unit-test we still need to round-trip through
-            # the same dict shape.
-            cfg = self.pane_configs.get(pane_id, {})
+            # Additional tabs use ids like `invisible-2`; resolve those back
+            # to the configured base pane so duplicate sessions inherit cwd.
+            cfg = self._config_for_pane(pane_id)
             try:
                 proc = self._spawn_for_pane(pane_id, cfg)
             except (OSError, RuntimeError) as e:
@@ -929,7 +1038,7 @@ class PTYServer:
             while True:
                 try:
                     chunk = await loop.run_in_executor(None, proc.read, 1024)
-                except (EOFError, OSError, ptyprocess.PtyProcessError):
+                except PROCESS_READ_ERRORS:
                     pty_dead = True
                     return
                 if not chunk:
@@ -955,12 +1064,22 @@ class PTYServer:
             try:
                 async for message in websocket:
                     if isinstance(message, str):
+                        resize_match = RESIZE_CONTROL_RE.match(message)
+                        if resize_match:
+                            try:
+                                resize_pty(proc, int(resize_match.group(1)), int(resize_match.group(2)))
+                            except Exception:  # noqa: BLE001 - ignore unsupported resize calls
+                                pass
+                            continue
+                    if IS_WINDOWS:
+                        data = message if isinstance(message, str) else bytes(message).decode("utf-8", errors="replace")
+                    elif isinstance(message, str):
                         data = message.encode("utf-8")
                     else:
                         data = bytes(message)
                     try:
                         proc.write(data)
-                    except (OSError, ptyprocess.PtyProcessError):
+                    except PROCESS_WRITE_ERRORS:
                         pty_dead_local = True  # noqa: F841 — narrative only
                         return
             except ConnectionClosed:
@@ -999,6 +1118,15 @@ class PTYServer:
     # ------------------------------------------------------------------
     # Internal: per-pane spawn dispatcher (Plan 02 hook).
     # ------------------------------------------------------------------
+
+    def _config_for_pane(self, pane_id: str) -> dict[str, Any]:
+        cfg = self.pane_configs.get(pane_id)
+        if cfg is not None:
+            return cfg
+        base_id, sep, suffix = pane_id.rpartition("-")
+        if sep and suffix.isdigit():
+            return self.pane_configs.get(base_id, {})
+        return {}
 
     def _spawn_for_pane(self, pane_id: str, cfg: dict[str, Any]) -> PtyProcess:
         """Spawn a PtyProcess for `pane_id` using `cfg` (from pane_configs).
