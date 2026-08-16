@@ -168,6 +168,28 @@ def _cm_path() -> str:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def _ssh_bin() -> str:
+    """Resolve the ssh binary. On Windows, prefer native Win32-OpenSSH.
+
+    A bare ``"ssh"`` on a typical Windows dev box resolves to Git's MSYS
+    ssh (``C:\\Program Files\\Git\\usr\\bin\\ssh.EXE``) via PATH. When an
+    MSYS binary is spawned from a *native* process (this daemon), the MSYS
+    runtime path-converts POSIX-looking argv elements — remote paths like
+    ``/home/avi/x`` become ``C:/Program Files/Git/home/avi/x`` and quoted
+    globs are mangled, silently breaking the remote ``find``. The native
+    client at ``%SystemRoot%\\System32\\OpenSSH\\ssh.exe`` passes argv
+    through untouched.
+    """
+    if os.name == "nt":
+        native = os.path.join(
+            os.environ.get("SystemRoot", r"C:\Windows"),
+            "System32", "OpenSSH", "ssh.exe",
+        )
+        if os.path.exists(native):
+            return native
+    return "ssh"
+
+
 def _ssh_argv(host: str, identity: str, *remote_cmd: str) -> list[str]:
     """Build the argv for an SSH call; never invoke a local shell.
 
@@ -187,13 +209,22 @@ def _ssh_argv(host: str, identity: str, *remote_cmd: str) -> list[str]:
     ``*/.git*`` glob-expanded by the remote shell against ``/home/avi``,
     breaking the find call.
     """
-    return [
-        "ssh",
+    argv = [
+        _ssh_bin(),
         "-o", "BatchMode=yes",
         "-o", f"ConnectTimeout={SSH_TIMEOUT_S}",
-        "-o", "ControlMaster=auto",
-        "-o", f"ControlPath={_cm_path()}",
-        "-o", "ControlPersist=60s",
+    ]
+    if os.name != "nt":
+        # Win32-OpenSSH has no mux support — ControlMaster=auto fails with
+        # "Failed to connect to new control master" and kills every call.
+        # POSIX keeps the dedicated daemon socket (see invisible.toml
+        # Decision A); Windows pays the full handshake per call instead.
+        argv += [
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={_cm_path()}",
+            "-o", "ControlPersist=60s",
+        ]
+    return argv + [
         "-i", os.path.expanduser(identity),
         host,
         "--",

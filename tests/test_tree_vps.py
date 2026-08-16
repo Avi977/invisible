@@ -499,7 +499,9 @@ def test_walk_all_argv_passes_through_ssh_options_and_identity(tmp_path, monkeyp
     tree_vps.walk_all()
 
     argv = captured["argv"]
-    assert argv[0] == "ssh"
+    # argv[0] is "ssh" on POSIX; on Windows it may resolve to the native
+    # Win32-OpenSSH absolute path (see _ssh_bin) — check the basename.
+    assert os.path.basename(argv[0]).lower() in ("ssh", "ssh.exe")
 
     # Pair-based assertions: each `-o KEY=VAL` is two consecutive elements.
     # Find adjacent pairs.
@@ -512,11 +514,17 @@ def test_walk_all_argv_passes_through_ssh_options_and_identity(tmp_path, monkeyp
         else:
             i += 1
     assert "BatchMode=yes" in options
-    assert "ControlMaster=auto" in options
-    assert "ControlPersist=60s" in options
-    # ControlPath is dynamic (depends on tmp_path); just check the prefix.
-    cp_found = any(o.startswith("ControlPath=") for o in options)
-    assert cp_found, f"ControlPath option missing from argv options: {options}"
+    if os.name == "nt":
+        # Win32-OpenSSH has no mux support — _ssh_argv must NOT emit
+        # ControlMaster options on Windows (they hard-fail every call).
+        assert "ControlMaster=auto" not in options
+        assert not any(o.startswith("ControlPath=") for o in options)
+    else:
+        assert "ControlMaster=auto" in options
+        assert "ControlPersist=60s" in options
+        # ControlPath is dynamic (depends on tmp_path); just check the prefix.
+        cp_found = any(o.startswith("ControlPath=") for o in options)
+        assert cp_found, f"ControlPath option missing from argv options: {options}"
     # ConnectTimeout=15 from SSH_TIMEOUT_S
     assert "ConnectTimeout=15" in options
 
