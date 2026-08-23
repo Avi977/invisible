@@ -40,8 +40,10 @@ ROUTE_MODEL = "qwen3:4b"
 # 30b remains available via an explicit {"model": ...} override.
 ANSWER_MODELS = ("qwen3:14b",)
 ROUTES = ("local", "claude", "session")
-# chat.py (claude route) caps at 8000; leave room for the injected memory block
 MAX_MESSAGE_CHARS = 6_000
+# chat.py accepts 24k; leave margin for the assembled handoff packet
+ESCALATION_MAX_CHARS = 23_000
+CURATE_TIMEOUT_S = 90
 MEMORY_LIMIT = 5
 CLASSIFY_TIMEOUT_S = 20
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -127,6 +129,97 @@ def _answer_model() -> str | None:
     return next((m for m in ANSWER_MODELS if m in names), None)
 
 
+def _project_state(project_id: str | None) -> str:
+    """Checkpoint + git status + graph excerpt as compact markdown. '' on failure."""
+    if not project_id or not _SLUG_RE.fullmatch(project_id):
+        return ""
+    try:
+        from api import handoff
+
+        parts = []
+        checkpoint = handoff._checkpoint(project_id)
+        if checkpoint:
+            summary = {k: checkpoint.get(k) for k in
+                       ("task", "iteration", "last_verdict", "last_summary", "last_sha")
+                       if checkpoint.get(k) is not None}
+            if summary:
+                parts.append("Checkpoint: " + json.dumps(summary))
+        repo = handoff._repo_path(project_id)
+        if repo:
+            git = handoff._git_status(repo)
+            if git:
+                parts.append("Git status:\n" + str(git)[:800])
+        graph = handoff._graph_excerpt(project_id)
+        names = [n.get("label") or n.get("id") for n in graph.get("nodes", [])
+                 if isinstance(n, dict)][:25]
+        if names:
+            parts.append("Related entities: " + ", ".join(str(n) for n in names))
+        return "\n".join(parts)
+    except Exception:  # noqa: BLE001 — enrichment is best-effort, never fatal
+        return ""
+
+
+_CURATE_SYSTEM = (
+    "You are the briefing officer between a local assistant and Claude, a "
+    "stronger AI that will actually answer. Rewrite the user's request as a "
+    "complete brief so Claude can give the best possible answer in one shot.\n"
+    "Sections: '## Goal' (what the user actually wants, made explicit), "
+    "'## Key context' (only the relevant facts from the material provided), "
+    "'## What a great answer includes' (structure, depth, tradeoffs to cover).\n"
+    "Do NOT answer the request yourself. Under 350 words. Markdown only."
+)
+
+
+def _curate(message: str, memory: str, history_block: str,
+            project_state: str) -> str:
+    """Answer-model pass that writes a briefing prompt for Claude. '' on failure."""
+    model = _answer_model()
+    if not model:
+        return ""
+    material = "\n\n".join(p for p in (history_block, memory, project_state) if p)
+    try:
+        out = ai._ollama_json(
+            "/api/chat",
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": _CURATE_SYSTEM},
+                    {"role": "user",
+                     "content": f"REQUEST:\n{message}\n\nMATERIAL:\n{material[:8000]}"},
+                ],
+                "stream": False,
+                "think": False,
+                "keep_alive": -1,
+                "options": {"temperature": 0.3, "num_predict": 700},
+            },
+            timeout=CURATE_TIMEOUT_S,
+        )
+        return ((out.get("message") or {}).get("content") or "").strip()
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError,
+            TypeError, AttributeError, KeyError, json.JSONDecodeError):
+        return ""
+
+
+def _escalation_packet(message: str, memory: str, history_block: str,
+                       project_state: str, curated: str) -> str:
+    """Assemble the full handoff prompt Claude receives."""
+    parts = [
+        "You are receiving a handoff from Ace's local AI router. Lead with a "
+        "short executive summary (the high-level answer), then supporting "
+        "detail. Everything the router knows is below.",
+    ]
+    if curated:
+        parts.append("# Curated brief\n" + curated)
+    parts.append("# Original request (verbatim)\n" + message)
+    if history_block:
+        parts.append("# Recent conversation\n" + history_block.strip())
+    if memory:
+        parts.append("# " + memory)  # already starts with 'Relevant memory:'
+    if project_state:
+        parts.append("# Project state\n" + project_state)
+    return "\n\n".join(parts)[:ESCALATION_MAX_CHARS]
+
+
 def _history_block(history: Any) -> str:
     """Compact recent turns for the stateless claude escalation. '' if none."""
     if not isinstance(history, list) or not history:
@@ -144,30 +237,16 @@ def _history_block(history: Any) -> str:
     return "Recent conversation:\n" + "\n".join(lines) + "\n\n"
 
 
-def _packet(message: str, project_id: str | None, memory: str) -> str:
-    created = datetime.now(timezone.utc).isoformat()
-    parts = [
-        "# Handoff",
-        f"Created: {created}",
-        f"Project: {project_id or '(none)'}",
-        "",
-        "## Question",
-        message,
-    ]
-    if memory:
-        parts += ["", "## Memory context", memory]
-    return "\n".join(parts) + "\n"
-
-
-def _save_session_packet(message: str, project_id: str | None,
-                         memory: str) -> str:
+def _save_session_packet(packet: str, project_id: str | None) -> str:
     slug = project_id if (isinstance(project_id, str)
                           and _SLUG_RE.fullmatch(project_id)) else "_global"
     directory = config.home() / "handoffs" / slug
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S-%fZ")
     path = directory / f"router-{stamp}.md"
-    path.write_text(_packet(message, project_id, memory), encoding="utf-8")
+    header = (f"# Handoff\nCreated: {datetime.now(timezone.utc).isoformat()}\n"
+              f"Project: {project_id or '(none)'}\n\n")
+    path.write_text(header + packet + "\n", encoding="utf-8")
     return str(path)
 
 
@@ -191,9 +270,17 @@ def ask_handler(body: Any) -> tuple[int, dict]:
 
     memory = _memory_block(message, project_id)
 
+    if route in ("claude", "session"):
+        history_block = _history_block(body.get("history"))
+        project_state = _project_state(project_id)
+        curated = "" if body.get("curate") is False else _curate(
+            message, memory, history_block, project_state)
+        packet = _escalation_packet(message, memory, history_block,
+                                    project_state, curated)
+
     if route == "session":
         try:
-            path = _save_session_packet(message, project_id, memory)
+            path = _save_session_packet(packet, project_id)
         except OSError:
             return 500, {"error": "internal error"}
         return 200, {
@@ -205,22 +292,23 @@ def ask_handler(body: Any) -> tuple[int, dict]:
             "provider": "local",
             "cost": 0,
             "memory_used": bool(memory),
+            "curated": bool(curated),
         }
 
-    prompt = f"{memory}\n\n{message}" if memory else message
-
     if route == "claude":
-        history_block = _history_block(body.get("history"))
         status, resp = chat.chat_handler({
-            "message": f"{history_block}{prompt}"[:7900],
+            "message": packet,
             "page_context": "router",
             "project_id": project_id,
         })
         if status != 200:
             return status, resp
         resp.update({"route": "claude", "confidence": confidence,
-                     "provider": "claude", "memory_used": bool(memory)})
+                     "provider": "claude", "memory_used": bool(memory),
+                     "curated": bool(curated)})
         return 200, resp
+
+    prompt = f"{memory}\n\n{message}" if memory else message
 
     # local
     payload = {

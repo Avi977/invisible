@@ -138,7 +138,7 @@ class TestChatHandlerFailureModes(unittest.TestCase):
             )
         self.assertEqual(status, 504)
         self.assertEqual(body["error"], "timeout")
-        self.assertIn("60", body["hint"])
+        self.assertIn(str(CLAUDE_TIMEOUT_S), body["hint"])
 
     def test_7_file_not_found_returns_502_and_redacts_paths(self):
         with patch("api.chat.subprocess.run",

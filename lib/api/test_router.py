@@ -59,16 +59,45 @@ class RoutingTests(unittest.TestCase):
         with patch.object(router.ai, "_ollama_json",
                           return_value=_classify_response("claude")), \
              patch.object(router, "_memory_block", return_value="Relevant memory:\n- fact"), \
+             patch.object(router, "_project_state", return_value="Checkpoint: {}"), \
+             patch.object(router, "_curate", return_value="## Goal\nAnswer well"), \
              patch.object(router.chat, "chat_handler",
                           return_value=(200, {"text": "deep answer"})) as esc:
-            status, body = router.ask_handler({"message": "hard question"})
+            status, body = router.ask_handler(
+                {"message": "hard question",
+                 "history": [{"role": "user", "content": "earlier turn"}]})
         self.assertEqual(status, 200)
         self.assertEqual(body["route"], "claude")
         self.assertEqual(body["provider"], "claude")
         self.assertTrue(body["memory_used"])
+        self.assertTrue(body["curated"])
         sent = esc.call_args[0][0]["message"]
-        self.assertIn("Relevant memory:", sent)
-        self.assertIn("hard question", sent)
+        for expected in ("Relevant memory:", "hard question", "## Goal",
+                         "earlier turn", "Checkpoint:", "executive summary"):
+            self.assertIn(expected, sent)
+
+    def test_claude_route_curate_failure_still_escalates(self):
+        with patch.object(router, "_memory_block", return_value=""), \
+             patch.object(router, "_project_state", return_value=""), \
+             patch.object(router, "_curate", return_value=""), \
+             patch.object(router.chat, "chat_handler",
+                          return_value=(200, {"text": "answer"})) as esc:
+            status, body = router.ask_handler(
+                {"message": "hard question", "force": "claude"})
+        self.assertEqual(status, 200)
+        self.assertFalse(body["curated"])
+        self.assertIn("hard question", esc.call_args[0][0]["message"])
+
+    def test_claude_route_curate_opt_out(self):
+        with patch.object(router, "_memory_block", return_value=""), \
+             patch.object(router, "_project_state", return_value=""), \
+             patch.object(router, "_curate") as curate, \
+             patch.object(router.chat, "chat_handler",
+                          return_value=(200, {"text": "answer"})):
+            status, body = router.ask_handler(
+                {"message": "q", "force": "claude", "curate": False})
+        curate.assert_not_called()
+        self.assertFalse(body["curated"])
 
     def test_classify_failure_falls_back_to_local(self):
         with patch.object(router.ai, "_ollama_json", side_effect=OSError), \
@@ -84,6 +113,8 @@ class RoutingTests(unittest.TestCase):
     def test_force_skips_classify(self):
         with patch.object(router.ai, "_ollama_json") as classify, \
              patch.object(router, "_memory_block", return_value=""), \
+             patch.object(router, "_project_state", return_value=""), \
+             patch.object(router, "_curate", return_value=""), \
              patch.object(router.chat, "chat_handler",
                           return_value=(200, {"text": "x"})):
             status, body = router.ask_handler(
@@ -98,7 +129,9 @@ class SessionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(router.config, "home",
                               return_value=Path(tmp)), \
-                 patch.object(router, "_memory_block", return_value=""):
+                 patch.object(router, "_memory_block", return_value=""), \
+                 patch.object(router, "_project_state", return_value=""), \
+                 patch.object(router, "_curate", return_value="## Goal\nBuild it"):
                 status, body = router.ask_handler(
                     {"message": "build the thing", "force": "session",
                      "project_id": "invisible"})
@@ -110,12 +143,15 @@ class SessionTests(unittest.TestCase):
             self.assertIn("invisible", packet.parts)
             text = packet.read_text(encoding="utf-8")
             self.assertIn("build the thing", text)
+            self.assertIn("## Goal", text)
 
     def test_session_bad_slug_goes_global(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(router.config, "home",
                               return_value=Path(tmp)), \
-                 patch.object(router, "_memory_block", return_value=""):
+                 patch.object(router, "_memory_block", return_value=""), \
+                 patch.object(router, "_project_state", return_value=""), \
+                 patch.object(router, "_curate", return_value=""):
                 status, body = router.ask_handler(
                     {"message": "do it", "force": "session",
                      "project_id": "../evil"})

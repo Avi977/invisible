@@ -53,8 +53,10 @@ from dataclasses import dataclass
 from typing import Any
 
 # ── Constants (tunable) ───────────────────────────────────────────────────
-MAX_MESSAGE_CHARS = 8000
-CLAUDE_TIMEOUT_S = 60  # interactive chat — shorter than runners.py's review timeout
+# 24k leaves room for the router's enriched handoff packets (curated brief +
+# memory + history + project state); the dashboard's 128KB body cap still holds.
+MAX_MESSAGE_CHARS = 24_000
+CLAUDE_TIMEOUT_S = 120  # router handoff packets need more headroom than chat
 CLAUDE_CMD: list[str] = ["claude", "-p", "--output-format", "json"]
 
 # Stderr redaction: anything that looks like an absolute path gets masked.
