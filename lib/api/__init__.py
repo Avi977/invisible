@@ -35,6 +35,7 @@ from . import pty         # noqa: F401  (local PTY daemon control)
 from . import integrations  # noqa: F401  (MCP/app connections + Infisical-backed credentials)
 from . import memory      # noqa: F401  (Envy/Hermes memory search)
 from . import runs        # noqa: F401  (long-running Envy runs)
+from . import router      # noqa: F401  (local-first router: POST /api/v1/router/ask)
 
 # Path → handler callable. Sister workstreams add their entries below this line.
 ROUTES: dict = {
@@ -50,4 +51,4 @@ ROUTES: dict = {
     "/api/v1/memory/search": memory.handle_search,
 }
 
-__all__ = ["ROUTES", "projects", "chat", "tree_local", "tree_vps", "tree_repo", "analytics", "relations", "calendar", "tools", "brief", "ai", "agent", "voice", "graphify_local", "pty", "integrations", "memory", "runs"]
+__all__ = ["ROUTES", "projects", "chat", "tree_local", "tree_vps", "tree_repo", "analytics", "relations", "calendar", "tools", "brief", "ai", "agent", "voice", "graphify_local", "pty", "integrations", "memory", "runs", "router"]

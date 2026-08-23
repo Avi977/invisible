@@ -72,6 +72,7 @@ from api import graphify_local as graphify_api  # noqa: E402  — POST /api/v1/g
 from api import pty as pty_api  # noqa: E402  — POST /api/v1/pty/start
 from api import integrations as integrations_api  # noqa: E402  — POST /api/v1/integrations/*
 from api import memory as memory_api  # noqa: E402  - POST /api/v1/memory/*
+from api import router as router_api  # noqa: E402  — POST /api/v1/router/ask
 from api import runs as runs_api  # noqa: E402  - POST/GET /api/v1/runs
 from api.chat import chat_handler  # noqa: E402  — POST /api/v1/chat proxy to `claude -p`
 from api import analytics as analytics_api  # noqa: E402  — GET /api/v1/analytics
@@ -512,6 +513,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/v1/ai/chat":
                 status, body = ai_api.chat_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/router/ask":
+                status, body = router_api.ask_handler(payload)
                 self._send_json(body, status)
                 return
             if path == "/api/v1/agent/chat":
