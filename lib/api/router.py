@@ -94,7 +94,7 @@ def _classify(message: str) -> tuple[str, float]:
         if route in ROUTES:
             return route, max(0.0, min(1.0, confidence))
     except (OSError, urllib.error.URLError, TimeoutError, ValueError,
-            json.JSONDecodeError):
+            TypeError, AttributeError, KeyError, json.JSONDecodeError):
         pass
     return "local", 0.0
 
@@ -127,6 +127,23 @@ def _answer_model() -> str | None:
     return next((m for m in ANSWER_MODELS if m in names), None)
 
 
+def _history_block(history: Any) -> str:
+    """Compact recent turns for the stateless claude escalation. '' if none."""
+    if not isinstance(history, list) or not history:
+        return ""
+    lines = []
+    for item in history[-6:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content") or item.get("text")
+        if role in ("user", "assistant") and isinstance(content, str) and content:
+            lines.append(f"{role}: {content[:500]}")
+    if not lines:
+        return ""
+    return "Recent conversation:\n" + "\n".join(lines) + "\n\n"
+
+
 def _packet(message: str, project_id: str | None, memory: str) -> str:
     created = datetime.now(timezone.utc).isoformat()
     parts = [
@@ -148,7 +165,7 @@ def _save_session_packet(message: str, project_id: str | None,
                           and _SLUG_RE.fullmatch(project_id)) else "_global"
     directory = config.home() / "handoffs" / slug
     directory.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S-%fZ")
     path = directory / f"router-{stamp}.md"
     path.write_text(_packet(message, project_id, memory), encoding="utf-8")
     return str(path)
@@ -193,8 +210,9 @@ def ask_handler(body: Any) -> tuple[int, dict]:
     prompt = f"{memory}\n\n{message}" if memory else message
 
     if route == "claude":
+        history_block = _history_block(body.get("history"))
         status, resp = chat.chat_handler({
-            "message": prompt,
+            "message": f"{history_block}{prompt}"[:7900],
             "page_context": "router",
             "project_id": project_id,
         })
