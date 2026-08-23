@@ -150,10 +150,22 @@ def _project_state(project_id: str | None) -> str:
             if git:
                 parts.append("Git status:\n" + str(git)[:800])
         graph = handoff._graph_excerpt(project_id)
-        names = [n.get("label") or n.get("id") for n in graph.get("nodes", [])
-                 if isinstance(n, dict)][:25]
-        if names:
-            parts.append("Related entities: " + ", ".join(str(n) for n in names))
+        labels = {n.get("id"): (n.get("label") or n.get("id"))
+                  for n in graph.get("nodes", []) if isinstance(n, dict)}
+        if labels:
+            parts.append("Related entities: "
+                         + ", ".join(str(v) for v in list(labels.values())[:25]))
+        edges = []
+        for e in graph.get("edges", []):
+            if not isinstance(e, dict):
+                continue
+            src = labels.get(e.get("source"), e.get("source"))
+            dst = labels.get(e.get("target"), e.get("target"))
+            kind = e.get("kind") or e.get("label") or "related"
+            if src and dst:
+                edges.append(f"{src} -[{kind}]-> {dst}")
+        if edges:
+            parts.append("Relations:\n" + "\n".join(edges[:30]))
         return "\n".join(parts)
     except Exception:  # noqa: BLE001 — enrichment is best-effort, never fatal
         return ""
@@ -173,11 +185,11 @@ _CURATE_SYSTEM = (
 def _curate(message: str, memory: str, history_block: str,
             project_state: str) -> str:
     """Answer-model pass that writes a briefing prompt for Claude. '' on failure."""
-    model = _answer_model()
-    if not model:
-        return ""
     material = "\n\n".join(p for p in (history_block, memory, project_state) if p)
     try:
+        model = _answer_model()
+        if not model:
+            return ""
         out = ai._ollama_json(
             "/api/chat",
             {
@@ -200,14 +212,27 @@ def _curate(message: str, memory: str, history_block: str,
         return ""
 
 
-def _escalation_packet(message: str, memory: str, history_block: str,
-                       project_state: str, curated: str) -> str:
-    """Assemble the full handoff prompt Claude receives."""
-    parts = [
+_PACKET_INSTRUCTIONS = {
+    "claude": (
         "You are receiving a handoff from Ace's local AI router. Lead with a "
         "short executive summary (the high-level answer), then supporting "
-        "detail. Everything the router knows is below.",
-    ]
+        "detail. Everything the router knows is below."
+    ),
+    "session": (
+        "You are Claude Code receiving a task handoff from Ace's local AI "
+        "router. This is work to DO in the repository, not a question to "
+        "answer: inspect the relevant code, implement the change, run the "
+        "tests, then finish with a short summary of what you did. Everything "
+        "the router knows is below."
+    ),
+}
+
+
+def _escalation_packet(message: str, memory: str, history_block: str,
+                       project_state: str, curated: str,
+                       mode: str = "claude") -> str:
+    """Assemble the full handoff prompt Claude receives."""
+    parts = [_PACKET_INSTRUCTIONS.get(mode, _PACKET_INSTRUCTIONS["claude"])]
     if curated:
         parts.append("# Curated brief\n" + curated)
     parts.append("# Original request (verbatim)\n" + message)
@@ -276,7 +301,7 @@ def ask_handler(body: Any) -> tuple[int, dict]:
         curated = "" if body.get("curate") is False else _curate(
             message, memory, history_block, project_state)
         packet = _escalation_packet(message, memory, history_block,
-                                    project_state, curated)
+                                    project_state, curated, mode=route)
 
     if route == "session":
         try:

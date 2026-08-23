@@ -144,6 +144,7 @@ class SessionTests(unittest.TestCase):
             text = packet.read_text(encoding="utf-8")
             self.assertIn("build the thing", text)
             self.assertIn("## Goal", text)
+            self.assertIn("Claude Code", text)  # session-mode instructions
 
     def test_session_bad_slug_goes_global(self):
         with tempfile.TemporaryDirectory() as tmp:
