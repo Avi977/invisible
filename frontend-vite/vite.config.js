@@ -10,5 +10,12 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      // Two entries: the cockpit window and the Alt+Space overlay window.
+      input: {
+        main: 'index.html',
+        overlay: 'overlay.html',
+      },
+    },
   },
 });

@@ -1,0 +1,166 @@
+/* Self-contained styling for the Alt+Space overlay window.
+   Deliberately does not import styles.css: that sheet dresses the cockpit
+   window's chrome (sidebar, page frame, body background) and would leak into
+   a 720x420 borderless panel. The tokens below mirror its palette. */
+
+:root {
+  --ov-bg: rgba(14, 16, 24, 0.94);
+  --ov-border: rgba(255, 255, 255, 0.10);
+  --ov-border-strong: rgba(255, 255, 255, 0.16);
+  --ov-text-1: #f4f5f8;
+  --ov-text-2: #b6bac4;
+  --ov-text-3: #7c818f;
+  --ov-accent: #8aa9ff;
+  --ov-local: #4ade80;
+  --ov-claude: #f5b343;
+  --ov-session: #b794ff;
+  --ov-error: #ff8080;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family: Geist, ui-sans-serif, system-ui, sans-serif;
+  color: var(--ov-text-1);
+  font-size: 14px;
+}
+
+.ov {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 14px;
+  background: var(--ov-bg);
+  border: 1px solid var(--ov-border-strong);
+  border-radius: 14px;
+  backdrop-filter: blur(18px);
+}
+
+.ov-bar { display: flex; gap: 8px; align-items: center; }
+
+.ov-input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ov-text-1);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--ov-border);
+  border-radius: 10px;
+  outline: none;
+}
+.ov-input:focus { border-color: var(--ov-accent); }
+.ov-input::placeholder { color: var(--ov-text-3); }
+
+.ov-go {
+  padding: 12px 18px;
+  font: inherit;
+  font-weight: 600;
+  color: #0a0b10;
+  background: var(--ov-accent);
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.ov-go:disabled { opacity: 0.4; cursor: default; }
+
+.ov-controls { display: flex; gap: 6px; align-items: center; }
+
+.ov-mode {
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ov-text-2);
+  background: transparent;
+  border: 1px solid var(--ov-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ov-mode.on {
+  color: var(--ov-text-1);
+  border-color: var(--ov-accent);
+  background: rgba(138, 169, 255, 0.14);
+}
+
+.ov-project {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ov-text-2);
+  background: transparent;
+  border: 1px solid var(--ov-border);
+  border-radius: 999px;
+  outline: none;
+}
+.ov-project::placeholder { color: var(--ov-text-3); }
+
+.ov-out {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--ov-border);
+  border-radius: 10px;
+}
+
+.ov-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+
+.ov-route {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.ov-route-local   { color: var(--ov-local); }
+.ov-route-claude  { color: var(--ov-claude); }
+.ov-route-session { color: var(--ov-session); }
+
+.ov-model { font-size: 11px; color: var(--ov-text-3); }
+
+.ov-text { white-space: pre-wrap; line-height: 1.55; color: var(--ov-text-1); }
+
+.ov-packet {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ov-border);
+}
+.ov-packet code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ov-text-2);
+}
+.ov-copy {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ov-text-2);
+  background: transparent;
+  border: 1px solid var(--ov-border);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ov-error { color: var(--ov-error); }

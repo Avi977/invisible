@@ -3,6 +3,7 @@
 //! close-to-hide window event. The SSE bridge spawn is added in Task 4.
 
 pub mod commands;
+pub mod overlay;
 pub mod sse;
 
 use std::net::{SocketAddr, TcpStream};
@@ -96,6 +97,13 @@ pub fn run() {
         ])
         .setup(|app| {
             spawn_local_dashboard(app);
+
+            // ── Alt+Space overlay ─────────────────────────────────────
+            // Global shortcut onto the router. Non-fatal: a shortcut the
+            // OS or another app already owns must not stop Envy booting.
+            if let Err(err) = overlay::install(app) {
+                eprintln!("[envy] overlay shortcut unavailable: {err}");
+            }
 
             // ── Tray (Open / Hide / Quit) ─────────────────────────────
             let open_i = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;

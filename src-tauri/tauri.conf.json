@@ -25,6 +25,21 @@
         "transparent": false,
         "visible": true,
         "backgroundColor": "#0d0f12"
+      },
+      {
+        "label": "overlay",
+        "url": "overlay.html",
+        "title": "Envy overlay",
+        "width": 720,
+        "height": 420,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": false,
+        "focus": false
       }
     ],
     "security": {

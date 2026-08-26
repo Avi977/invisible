@@ -258,8 +258,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         browser then blocks the cross-origin read.
         """
         origin = self.headers.get("Origin", "")
+        # The packaged Tauri webview is not a loopback origin: WebView2 serves
+        # the bundled UI from http(s)://tauri.localhost on Windows and
+        # tauri://localhost on macOS/Linux. Without these the desktop app's own
+        # fetches -- the cockpit pages and the Alt+Space overlay -- fail CORS
+        # against its own backend. No remote page can claim these origins, so
+        # the loopback-only posture is unchanged.
         if (origin.startswith("http://127.0.0.1:")
-                or origin.startswith("http://localhost:")):
+                or origin.startswith("http://localhost:")
+                or origin in ("http://tauri.localhost",
+                              "https://tauri.localhost",
+                              "tauri://localhost")):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
 
