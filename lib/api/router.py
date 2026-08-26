@@ -129,8 +129,19 @@ def _answer_model() -> str | None:
     return next((m for m in ANSWER_MODELS if m in names), None)
 
 
-def _project_state(project_id: str | None) -> str:
-    """Checkpoint + git status + graph excerpt as compact markdown. '' on failure."""
+def _short(text: Any, width: int = 60) -> str:
+    """One-line, bounded label. Graphify labels many nodes with a whole
+    docstring, which turns the entities list into paragraphs of prose."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= width else flat[:width - 1].rstrip() + "…"
+
+
+def _project_state(project_id: str | None, query: str | None = None) -> str:
+    """Checkpoint + git status + graph excerpt as compact markdown. '' on failure.
+
+    `query` is the user's request; it ranks the graph excerpt so the packet
+    describes the relevant code instead of the first 40 nodes on disk.
+    """
     if not project_id or not _SLUG_RE.fullmatch(project_id):
         return ""
     try:
@@ -149,8 +160,8 @@ def _project_state(project_id: str | None) -> str:
             git = handoff._git_status(repo)
             if git:
                 parts.append("Git status:\n" + str(git)[:800])
-        graph = handoff._graph_excerpt(project_id)
-        labels = {n.get("id"): (n.get("label") or n.get("id"))
+        graph = handoff._graph_excerpt(project_id, query)
+        labels = {n.get("id"): _short(n.get("label") or n.get("id"))
                   for n in graph.get("nodes", []) if isinstance(n, dict)}
         if labels:
             parts.append("Related entities: "
@@ -299,7 +310,7 @@ def ask_handler(body: Any) -> tuple[int, dict]:
 
     if route in ("claude", "session"):
         history_block = _history_block(body.get("history"))
-        project_state = _project_state(project_id)
+        project_state = _project_state(project_id, message)
         curated = "" if body.get("curate") is False else _curate(
             message, memory, history_block, project_state)
         packet = _escalation_packet(message, memory, history_block,

@@ -175,7 +175,9 @@ class ProjectStateTests(unittest.TestCase):
 
     def _state(self, graph, project="invisible"):
         from api import handoff
-        with patch.object(handoff, "_checkpoint", return_value=None),              patch.object(handoff, "_repo_path", return_value=None),              patch.object(handoff, "_graph_excerpt", return_value=graph):
+        with patch.object(handoff, "_checkpoint", return_value=None), \
+             patch.object(handoff, "_repo_path", return_value=None), \
+             patch.object(handoff, "_graph_excerpt", return_value=graph):
             return router._project_state(project)
 
     def test_serializes_edges_from_build_graph_keys(self):
@@ -197,6 +199,24 @@ class ProjectStateTests(unittest.TestCase):
     def test_unlabelled_edge_falls_back_to_ids_and_kind(self):
         graph = {"nodes": [], "edges": [{"from": "x", "to": "y"}]}
         self.assertIn("x -[related]-> y", self._state(graph))
+
+    def test_long_labels_are_trimmed(self):
+        prose = ("Build the /api/v1/relations response: an Obsidian-style "
+                 "graph derived from the project tree and its docstrings.")
+        graph = {"nodes": [{"id": "a", "label": prose},
+                           {"id": "b", "label": "chat.py"}],
+                 "edges": [{"from": "a", "to": "b", "kind": "calls"}]}
+        state = self._state(graph)
+        self.assertIn("Build the /api/v1/relations response: an", state)
+        self.assertIn("…", state)
+        self.assertNotIn("docstrings", state)
+        trimmed = ("Build the /api/v1/relations response: an "
+                   "Obsidian-style gra" + chr(8230))
+        self.assertLessEqual(len(trimmed), 60)
+        self.assertIn(trimmed + " -[calls]-> chat.py", state)
+
+    def test_short_collapses_whitespace(self):
+        self.assertEqual(router._short("a\n  b\tc"), "a b c")
 
     def test_bad_slug_returns_empty(self):
         self.assertEqual(router._project_state("../evil"), "")

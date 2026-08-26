@@ -37,19 +37,81 @@ def _checkpoint(project: str) -> dict:
         return {}
 
 
-def _graph_excerpt(project: str) -> dict:
+# Directories holding dependencies rather than the project's own code. This
+# repo's graph is 151k nodes, 96% of them under vendor/ -- never the subject
+# of a handoff, and they crowd out everything that is.
+_VENDOR_PREFIXES = ("vendor/", "node_modules/", ".venv/", "venv/", "dist/",
+                    "build/", "site-packages/", "third_party/")
+
+_TERM_RE = re.compile(r"[a-z0-9]+")
+
+
+def _node_path(node: dict) -> str:
+    raw = node.get("file_path") or node.get("source_file") or ""
+    return str(raw).replace("\\", "/").lstrip("./")
+
+
+def _is_vendored(node: dict) -> bool:
+    return _node_path(node).startswith(_VENDOR_PREFIXES)
+
+
+def _terms(text: str | None) -> set[str]:
+    """Lowercase word tokens worth matching on. Drops 1-2 char noise."""
+    if not isinstance(text, str):
+        return set()
+    return {t for t in _TERM_RE.findall(text.lower()) if len(t) > 2}
+
+
+def _node_score(node: dict, terms: set[str]) -> int:
+    """2 per term hitting the node's label, 1 per term hitting its path."""
+    label = _terms(str(node.get("label") or node.get("id") or ""))
+    path = _terms(_node_path(node))
+    return 2 * len(terms & label) + len(terms & path)
+
+
+def _graph_excerpt(project: str, query: str | None = None,
+                   limit: int = 40) -> dict:
+    """Up to `limit` nodes plus the edges among them.
+
+    Given a query, seeds the excerpt with the nodes matching it and expands to
+    their direct neighbours, so the packet describes the code the request is
+    actually about. Without one, falls back to walk order -- which is what
+    every packet used to get regardless of what was asked.
+    """
     try:
         from api import relations
 
         graph = relations.build_graph(project)
     except Exception:  # noqa: BLE001
         return {"nodes": [], "edges": []}
-    nodes = graph.get("nodes", [])[:40]
-    node_ids = {n.get("id") for n in nodes if isinstance(n, dict)}
-    edges = [
-        e for e in graph.get("edges", [])
-        if isinstance(e, dict) and e.get("from") in node_ids and e.get("to") in node_ids
-    ][:80]
+    candidates = [n for n in graph.get("nodes", [])
+                  if isinstance(n, dict) and not _is_vendored(n)]
+    raw_edges = [e for e in graph.get("edges", []) if isinstance(e, dict)]
+    terms = _terms(query)
+    seeds: list[dict] = []
+    if terms:
+        # -i keeps walk order stable among equal scores under reverse=True.
+        ranked = sorted(
+            ((_node_score(n, terms), -i, n) for i, n in enumerate(candidates)),
+            key=lambda t: t[:2], reverse=True)
+        seeds = [n for score, _, n in ranked if score > 0][:max(1, limit // 2)]
+    if not seeds:
+        seeds = candidates[:limit]
+    picked = {n.get("id"): n for n in seeds if n.get("id")}
+    if terms:
+        by_id = {n.get("id"): n for n in candidates}
+        for e in raw_edges:
+            if len(picked) >= limit:
+                break
+            frm, to = e.get("from"), e.get("to")
+            for near, other in ((frm, to), (to, frm)):
+                if near in picked and other in by_id and other not in picked:
+                    picked[other] = by_id[other]
+                    break
+    nodes = list(picked.values())[:limit]
+    node_ids = {n.get("id") for n in nodes}
+    edges = [e for e in raw_edges
+             if e.get("from") in node_ids and e.get("to") in node_ids][:80]
     return {"nodes": nodes, "edges": edges}
 
 
@@ -168,7 +230,7 @@ def draft_handler(body: Any) -> tuple[int, dict]:
         target = "human"
     task_id = body.get("task_id") if isinstance(body.get("task_id"), str) else None
     checkpoint = _checkpoint(project)
-    graph = _graph_excerpt(project)
+    graph = _graph_excerpt(project, goal)
     packet = _build_packet(project, goal, target, checkpoint, graph, task_id)
     prompt = _build_prompt(project, goal, checkpoint, graph)
     status, response = ai.chat_handler({
