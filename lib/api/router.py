@@ -159,8 +159,10 @@ def _project_state(project_id: str | None) -> str:
         for e in graph.get("edges", []):
             if not isinstance(e, dict):
                 continue
-            src = labels.get(e.get("source"), e.get("source"))
-            dst = labels.get(e.get("target"), e.get("target"))
+            # build_graph emits from/to/kind (relations.py docstring), NOT
+            # source/target -- those are raw graph.json "links" keys.
+            src = labels.get(e.get("from"), e.get("from"))
+            dst = labels.get(e.get("to"), e.get("to"))
             kind = e.get("kind") or e.get("label") or "related"
             if src and dst:
                 edges.append(f"{src} -[{kind}]-> {dst}")

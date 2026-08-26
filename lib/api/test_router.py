@@ -160,5 +160,49 @@ class SessionTests(unittest.TestCase):
             self.assertIn("_global", Path(body["packet_path"]).parts)
 
 
+class ProjectStateTests(unittest.TestCase):
+    """_project_state is patched out in every other test -- cover it directly.
+
+    Regression guard: it once read edge keys "source"/"target", which
+    build_graph never emits, so the Relations block silently never rendered.
+    """
+
+    _GRAPH = {
+        "nodes": [{"id": "a", "label": "router.py"},
+                  {"id": "b", "label": "chat.py"}],
+        "edges": [{"from": "a", "to": "b", "kind": "import"}],
+    }
+
+    def _state(self, graph, project="invisible"):
+        from api import handoff
+        with patch.object(handoff, "_checkpoint", return_value=None),              patch.object(handoff, "_repo_path", return_value=None),              patch.object(handoff, "_graph_excerpt", return_value=graph):
+            return router._project_state(project)
+
+    def test_serializes_edges_from_build_graph_keys(self):
+        state = self._state(self._GRAPH)
+        self.assertIn("Related entities: router.py, chat.py", state)
+        self.assertIn("Relations:", state)
+        self.assertIn("router.py -[import]-> chat.py", state)
+
+    def test_raw_graph_json_link_keys_are_not_edges(self):
+        # graph.json on disk uses source/target under "links"; build_graph
+        # normalises those away. If one leaks through unnormalised we emit
+        # entities but no relations, rather than "None -[related]-> None".
+        graph = {"nodes": self._GRAPH["nodes"],
+                 "edges": [{"source": "a", "target": "b", "relation": "x"}]}
+        state = self._state(graph)
+        self.assertIn("Related entities:", state)
+        self.assertNotIn("Relations:", state)
+
+    def test_unlabelled_edge_falls_back_to_ids_and_kind(self):
+        graph = {"nodes": [], "edges": [{"from": "x", "to": "y"}]}
+        self.assertIn("x -[related]-> y", self._state(graph))
+
+    def test_bad_slug_returns_empty(self):
+        self.assertEqual(router._project_state("../evil"), "")
+
+    def test_no_project_returns_empty(self):
+        self.assertEqual(router._project_state(None), "")
+
 if __name__ == "__main__":
     unittest.main()
