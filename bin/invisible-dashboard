@@ -64,6 +64,16 @@ from dashboard_render import (  # noqa: E402
 from api import ROUTES as API_V1_ROUTES  # noqa: E402
 from api import tree_local, tree_vps, tree_repo  # noqa: E402  — GET /api/v1/tree/{local,vps,repo}
 from api import tools  # noqa: E402  — GET/PUT/DELETE /api/v1/tools
+from api import ai as ai_api  # noqa: E402  — local Ollama POST /api/v1/ai/chat
+from api import agent as agent_api  # noqa: E402  — local Envy tool agent
+from api import handoff as handoff_api  # noqa: E402  — POST /api/v1/handoff/*
+from api import voice as voice_api  # noqa: E402  — POST /api/v1/voice/transcribe
+from api import graphify_local as graphify_api  # noqa: E402  — POST /api/v1/graphify/run
+from api import pty as pty_api  # noqa: E402  — POST /api/v1/pty/start
+from api import integrations as integrations_api  # noqa: E402  — POST /api/v1/integrations/*
+from api import memory as memory_api  # noqa: E402  - POST /api/v1/memory/*
+from api import router as router_api  # noqa: E402  — POST /api/v1/router/ask
+from api import runs as runs_api  # noqa: E402  - POST/GET /api/v1/runs
 from api.chat import chat_handler  # noqa: E402  — POST /api/v1/chat proxy to `claude -p`
 from api import analytics as analytics_api  # noqa: E402  — GET /api/v1/analytics
 
@@ -248,8 +258,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         browser then blocks the cross-origin read.
         """
         origin = self.headers.get("Origin", "")
+        # The packaged Tauri webview is not a loopback origin: WebView2 serves
+        # the bundled UI from http(s)://tauri.localhost on Windows and
+        # tauri://localhost on macOS/Linux. Without these the desktop app's own
+        # fetches -- the cockpit pages and the Alt+Space overlay -- fail CORS
+        # against its own backend. No remote page can claim these origins, so
+        # the loopback-only posture is unchanged.
         if (origin.startswith("http://127.0.0.1:")
-                or origin.startswith("http://localhost:")):
+                or origin.startswith("http://localhost:")
+                or origin in ("http://tauri.localhost",
+                              "https://tauri.localhost",
+                              "tauri://localhost")):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
 
@@ -413,6 +432,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             brief_api.handle_brief_get(self, project_id)
             return
 
+        if path.startswith("/api/v1/runs/"):
+            run_id = path[len("/api/v1/runs/"):].strip("/")
+            if run_id and "/" not in run_id:
+                status, body = runs_api.get_handler(run_id)
+                self._send_json(body, status)
+                return
+
         self._send_text("not found\n", 404)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
@@ -446,7 +472,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # ---- POST routing ----
     # Defense-in-depth body cap. The chat_handler will further reject any
     # message field longer than 8000 chars; this is a coarser pre-parse limit.
-    _MAX_POST_BYTES = 32_768
+    _MAX_POST_BYTES = 131_072
 
     def do_POST(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
@@ -492,6 +518,67 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/v1/chat":
                 status, body = chat_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/ai/chat":
+                status, body = ai_api.chat_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/router/ask":
+                status, body = router_api.ask_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/agent/chat":
+                status, body = agent_api.chat_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/tools/search":
+                status, body = agent_api.search_tools_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/tools/describe":
+                status, body = agent_api.describe_tool_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/tools/execute":
+                status, body = agent_api.execute_tool_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/memory/write":
+                status, body = memory_api.write_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/handoff/draft":
+                status, body = handoff_api.draft_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/handoff/save":
+                status, body = handoff_api.save_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/voice/transcribe":
+                status, body = voice_api.transcribe_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/graphify/run":
+                status, body = graphify_api.run_handler(payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/pty/start":
+                status, body = pty_api.start_handler(payload)
+                self._send_json(body, status)
+                return
+            if path.startswith("/api/v1/integrations/"):
+                status, body = integrations_api.post_handler(path, payload)
+                self._send_json(body, status)
+                return
+            if path == "/api/v1/runs":
+                status, body = runs_api.start_handler(payload)
+                self._send_json(body, status)
+                return
+            if path.startswith("/api/v1/runs/") and path.endswith("/handoff"):
+                run_id = path[len("/api/v1/runs/"):-len("/handoff")].strip("/")
+                status, body = runs_api.handoff_handler(run_id, payload)
                 self._send_json(body, status)
                 return
             # Per-project log append — POST /api/v1/projects/<id>/log.

@@ -53,8 +53,10 @@ from dataclasses import dataclass
 from typing import Any
 
 # ── Constants (tunable) ───────────────────────────────────────────────────
-MAX_MESSAGE_CHARS = 8000
-CLAUDE_TIMEOUT_S = 60  # interactive chat — shorter than runners.py's review timeout
+# 24k leaves room for the router's enriched handoff packets (curated brief +
+# memory + history + project state); the dashboard's 128KB body cap still holds.
+MAX_MESSAGE_CHARS = 24_000
+CLAUDE_TIMEOUT_S = 120  # router handoff packets need more headroom than chat
 CLAUDE_CMD: list[str] = ["claude", "-p", "--output-format", "json"]
 
 # Stderr redaction: anything that looks like an absolute path gets masked.
@@ -108,11 +110,19 @@ def _build_prompt(message: str, page_context: str, project_id: str | None) -> st
     ]
     if project_id:
         parts.append(f"Current project: {project_id}.")
-    parts.extend([
-        "Be terse — 2-4 short sentences max.",
-        "No emoji.",
-        "Speak like a senior engineer pairing with the user.",
-    ])
+    if page_context == "router":
+        # Router handoff packets carry their own response instructions
+        # (executive summary + supporting detail) — no terse cap here.
+        parts.extend([
+            "No emoji.",
+            "Speak like a senior engineer pairing with the user.",
+        ])
+    else:
+        parts.extend([
+            "Be terse — 2-4 short sentences max.",
+            "No emoji.",
+            "Speak like a senior engineer pairing with the user.",
+        ])
     system = " ".join(parts)
     return f"{system}\n\nUser: {message}"
 

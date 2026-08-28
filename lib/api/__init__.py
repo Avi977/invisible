@@ -27,12 +27,28 @@ from . import relations   # noqa: F401  (relations: GET /api/v1/relations)
 from . import calendar    # noqa: F401  (calendar: GET /api/v1/calendar)
 from . import tools       # noqa: F401  (tools: GET/PUT/DELETE /api/v1/tools — dispatched per-method by invisible-dashboard)
 from . import brief       # noqa: F401  (brief: GET /api/v1/projects/<id>/brief, POST /api/v1/projects/<id>/log — path-param dispatch in invisible-dashboard)
+from . import ai          # noqa: F401  (local Ollama: GET /api/v1/ai/models, POST /api/v1/ai/chat)
+from . import agent       # noqa: F401  (local Envy tool agent)
+from . import voice       # noqa: F401  (local OpenWhispr bridge)
+from . import graphify_local  # noqa: F401  (local Graphify wrapper)
+from . import pty         # noqa: F401  (local PTY daemon control)
+from . import integrations  # noqa: F401  (MCP/app connections + Infisical-backed credentials)
+from . import memory      # noqa: F401  (Envy/Hermes memory search)
+from . import runs        # noqa: F401  (long-running Envy runs)
+from . import router      # noqa: F401  (local-first router: POST /api/v1/router/ask)
 
 # Path → handler callable. Sister workstreams add their entries below this line.
 ROUTES: dict = {
     "/api/v1/projects": projects.handle_projects,
     "/api/v1/relations": relations.handle_relations,
     "/api/v1/calendar": calendar.handle_calendar,
+    "/api/v1/ai/models": ai.handle_models,
+    "/api/v1/agent/tools": agent.handle_tools,
+    "/api/v1/voice/status": voice.handle_status,
+    "/api/v1/graphify/status": graphify_local.handle_status,
+    "/api/v1/pty/status": pty.handle_status,
+    "/api/v1/integrations": integrations.handle_status,
+    "/api/v1/memory/search": memory.handle_search,
 }
 
-__all__ = ["ROUTES", "projects", "chat", "tree_local", "tree_vps", "tree_repo", "analytics", "relations", "calendar", "tools", "brief"]
+__all__ = ["ROUTES", "projects", "chat", "tree_local", "tree_vps", "tree_repo", "analytics", "relations", "calendar", "tools", "brief", "ai", "agent", "voice", "graphify_local", "pty", "integrations", "memory", "runs", "router"]

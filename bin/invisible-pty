@@ -2,7 +2,7 @@
 """invisible-pty — local WebSocket PTY daemon for the Terminals page.
 
 What it serves:
-  - ws://127.0.0.1:8091/pty/{pane_id}     one real bash PTY per connection
+  - ws://127.0.0.1:8091/pty/{pane_id}     one real local shell per connection
                                           (bidirectional bytes; up to 32
                                           concurrent PTYs by default)
   - http://127.0.0.1:8091/context/{id}    side-channel JSON: per-pane
@@ -61,7 +61,7 @@ def _default_config_path() -> Path:
     `~/.invisible`. We compute this here (rather than import `home()`) so
     the CLI's `--config` default is visible in `--help` and so a missing
     file is silently tolerated by `load_pane_configs` (the daemon still
-    runs with all-default plain-bash panes).
+    runs with default local-shell panes).
     """
     base = os.environ.get("INVISIBLE_HOME") or "~/.invisible"
     return Path(os.path.expanduser(base)) / "invisible.toml"
@@ -72,9 +72,9 @@ def main() -> int:
         prog="invisible-pty",
         description=(
             "WebSocket PTY daemon for the invisible Terminals page. "
-            "Binds 127.0.0.1:8091 by default and spawns one bash PTY per "
+            "Binds 127.0.0.1:8091 by default and spawns one local shell per "
             "ws://127.0.0.1:8091/pty/{pane_id} connection. Pane configs "
-            "(bash vs ssh, cwd, env) are loaded from invisible.toml "
+            "(powershell/bash vs ssh, cwd, env) are loaded from invisible.toml "
             "[[terminals]] blocks at startup."
         ),
     )
@@ -96,7 +96,7 @@ def main() -> int:
         help=(
             "path to invisible.toml (default: $INVISIBLE_HOME/invisible.toml "
             "or ~/.invisible/invisible.toml). Missing file is tolerated — "
-            "daemon will run with all-default plain-bash panes."
+            "daemon will run with default local-shell panes."
         ),
     )
     ap.add_argument(

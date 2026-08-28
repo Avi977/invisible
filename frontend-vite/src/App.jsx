@@ -1,8 +1,9 @@
-// App shell — sidebar nav + page router + Tweaks panel.
+// App shell - sidebar nav + page router + Tweaks panel.
 
 import { useState, useEffect } from 'react';
 import { I } from './Icons.jsx';
 import { DATA_SETS } from './Data.jsx';
+import { apiJson } from './lib/api.js';
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakSelect } from './TweaksPanel.jsx';
 import AIBubble from './AiChat.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -15,11 +16,11 @@ import Calendar from './pages/Calendar.jsx';
 import Analytics from './pages/Analytics.jsx';
 
 const PAGES = [
-  { id: "dashboard",  label: "Dashboard",   icon: "Dashboard", color: "var(--c-dash)",  badge: "3 active", Cmp: () => null },
+  { id: "dashboard",  label: "Dashboard",   icon: "Dashboard", color: "var(--c-dash)",  badge: null,       Cmp: () => null },
   { id: "focus",      label: "Focus",       icon: "Target",    color: "var(--c-focus)", badge: null,       Cmp: () => null },
   { id: "folders",    label: "Folders",     icon: "Folder",    color: "var(--c-fold)",  badge: null,       Cmp: () => null },
   { id: "relations",  label: "Relations",   icon: "Graph",     color: "var(--c-graph)", badge: null,       Cmp: () => null },
-  { id: "terminals",  label: "Terminals",   icon: "Terminal",  color: "var(--c-term)",  badge: "6",        Cmp: () => null },
+  { id: "terminals",  label: "Terminals",   icon: "Terminal",  color: "var(--c-term)",  badge: null,       Cmp: () => null },
   { id: "tools",      label: "Tools",       icon: "Tools",     color: "var(--c-tools)", badge: null,       Cmp: () => null },
   { id: "calendar",   label: "Calendar",    icon: "Calendar",  color: "var(--c-cal)",   badge: "8",        Cmp: () => null },
   { id: "analytics",  label: "Analytics",   icon: "BarChart",  color: "var(--c-anlt)",  badge: null,       Cmp: () => null },
@@ -35,7 +36,7 @@ const DEFAULTS = /*EDITMODE-BEGIN*/{
 
 const DENSITY_VALUES = { compact: 0.88, comfy: 1.0, spacious: 1.12 };
 
-function Sidebar({ activeId, onChange, collapsed, onToggle }) {
+function Sidebar({ activeId, onChange, collapsed, onToggle, terminalCount, activeProjectCount }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -44,27 +45,34 @@ function Sidebar({ activeId, onChange, collapsed, onToggle }) {
       </div>
 
       <div className="nav-section-title">Workspace</div>
-      {PAGES.map(p => (
-        <div
-          key={p.id}
-          className={"nav-item " + (activeId === p.id ? "active" : "")}
-          style={{ "--nav-c": p.color }}
-          onClick={() => onChange(p.id)}
-        >
-          <span className="nav-icon">
-            {p.icon === "Dashboard" && <I.Dashboard size={18}/>}
-            {p.icon === "Target"    && <I.Target size={18}/>}
-            {p.icon === "Folder"    && <I.Folder size={18}/>}
-            {p.icon === "Graph"     && <I.Graph size={18}/>}
-            {p.icon === "Terminal"  && <I.Terminal size={18}/>}
-            {p.icon === "Tools"     && <I.Tools size={18}/>}
-            {p.icon === "Calendar"  && <I.Calendar size={18}/>}
-            {p.icon === "BarChart"  && <I.BarChart size={18}/>}
-          </span>
-          <span className="nav-label">{p.label}</span>
-          {p.badge && <span className="nav-badge">{p.badge}</span>}
-        </div>
-      ))}
+      {PAGES.map(p => {
+        const badge = p.id === "terminals"
+          ? String(terminalCount)
+          : p.id === "dashboard"
+            ? `${activeProjectCount} active`
+            : p.badge;
+        return (
+          <div
+            key={p.id}
+            className={"nav-item " + (activeId === p.id ? "active" : "")}
+            style={{ "--nav-c": p.color }}
+            onClick={() => onChange(p.id)}
+          >
+            <span className="nav-icon">
+              {p.icon === "Dashboard" && <I.Dashboard size={18}/>}
+              {p.icon === "Target"    && <I.Target size={18}/>}
+              {p.icon === "Folder"    && <I.Folder size={18}/>}
+              {p.icon === "Graph"     && <I.Graph size={18}/>}
+              {p.icon === "Terminal"  && <I.Terminal size={18}/>}
+              {p.icon === "Tools"     && <I.Tools size={18}/>}
+              {p.icon === "Calendar"  && <I.Calendar size={18}/>}
+              {p.icon === "BarChart"  && <I.BarChart size={18}/>}
+            </span>
+            <span className="nav-label">{p.label}</span>
+            {badge && <span className="nav-badge">{badge}</span>}
+          </div>
+        );
+      })}
 
       <div className="sidebar-spacer"/>
 
@@ -84,7 +92,7 @@ function Sidebar({ activeId, onChange, collapsed, onToggle }) {
         <div className="avatar">D</div>
         <div className="sidebar-footer-meta">
           <div className="sidebar-footer-name">dev@local</div>
-          <div className="sidebar-footer-sub">⌘K · search</div>
+          <div className="sidebar-footer-sub">Ctrl+K - search</div>
         </div>
       </div>
 
@@ -95,14 +103,14 @@ function Sidebar({ activeId, onChange, collapsed, onToggle }) {
   );
 }
 
-function PageHeader({ page, projects, dataSetName }) {
+function PageHeader({ page, projects, dataSetName, terminalCount }) {
   const subs = {
-    dashboard: `${projects.length} projects · ${projects.filter(p => p.status === "in-progress").length} active`,
-    focus:     "Deep work · one task at a time",
-    folders:   "3 sources · 1,204 files indexed",
-    relations: "18 nodes · 22 links",
-    terminals: "6 sessions · zsh",
-    tools:     "Workflow editor · echo-deploy",
+    dashboard: `${projects.length} projects - ${projects.filter(p => p.status === "in-progress").length} active`,
+    focus:     "Deep work - one task at a time",
+    folders:   "3 sources - 1,204 files indexed",
+    relations: "Project dependency map",
+    terminals: `${terminalCount || projects.length} sessions - PowerShell`,
+    tools:     "Workflow editor - echo-deploy",
     calendar:  "Week of " + new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" }),
     analytics: "Tokens, time and tool usage",
   };
@@ -112,7 +120,7 @@ function PageHeader({ page, projects, dataSetName }) {
       <div>
         <h1 className="page-title">
           <span className="accent">{page.label.toLowerCase()}</span>
-          {page.id === "dashboard" && <span style={{ color: "var(--text-3)", fontWeight: 400, fontSize: "0.7em" }}> · {dataSetName}</span>}
+          {page.id === "dashboard" && <span style={{ color: "var(--text-3)", fontWeight: 400, fontSize: "0.7em" }}> - {dataSetName}</span>}
         </h1>
         <div className="page-sub">{subs[page.id]}</div>
       </div>
@@ -129,6 +137,8 @@ function PageHeader({ page, projects, dataSetName }) {
 function App() {
   const [pageId, setPageId] = useState("dashboard");
   const [selectedProject, setSelectedProject] = useState(null); // project id, for cross-page focus
+  const [apiProjects, setApiProjects] = useState(null);
+  const [terminalSessionCount, setTerminalSessionCount] = useState(0);
   const [t, setTweak] = useTweaks(DEFAULTS);
 
   const navTo = (id, projectId = null) => {
@@ -147,7 +157,17 @@ function App() {
   // Data set
   const dataKey = t.dataSet || "default";
   const data = DATA_SETS[dataKey] || DATA_SETS.default;
-  const projects = data.projects;
+  const projects = apiProjects?.length ? apiProjects : data.projects;
+  const activeProjectCount = projects.filter(p => p.status === "in-progress").length;
+  const terminalCount = terminalSessionCount || projects.length;
+
+  useEffect(() => {
+    apiJson("/api/v1/projects")
+      .then(rows => {
+        if (Array.isArray(rows)) setApiProjects(rows);
+      })
+      .catch(() => setApiProjects(null));
+  }, []);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--accent", accent);
@@ -163,16 +183,18 @@ function App() {
           activeId={pageId}
           onChange={setPageId}
           collapsed={collapsed}
+          terminalCount={terminalCount}
+          activeProjectCount={activeProjectCount}
           onToggle={() => setTweak("sidebar", collapsed ? "expanded" : "collapsed")}
         />
         <main className="page" key={pageId}>
-          <PageHeader page={page} projects={projects} dataSetName={data.name}/>
+          <PageHeader page={page} projects={projects} dataSetName={data.name} terminalCount={terminalCount}/>
           <div className="page-body fade-in">
             {pageId === "dashboard"  && <Dashboard projects={projects} layout={t.mainLayout} dataSet={data.name} navTo={navTo}/>}
             {pageId === "focus"      && <Focus projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject}/>}
             {pageId === "folders"    && <Folders/>}
             {pageId === "relations"  && <Relations/>}
-            {pageId === "terminals"  && <Terminals projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject}/>}
+            {pageId === "terminals"  && <Terminals projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject} onSessionCountChange={setTerminalSessionCount}/>}
             {pageId === "tools"      && <Tools projects={projects} selectedProject={selectedProject} setSelectedProject={setSelectedProject}/>}
             {pageId === "calendar"   && <Calendar/>}
             {pageId === "analytics"  && <Analytics projects={projects}/>}
@@ -180,7 +202,7 @@ function App() {
         </main>
       </div>
 
-      <AIBubble pageContext={page.label}/>
+      <AIBubble pageContext={page.label} selectedProject={selectedProject}/>
 
       <TweaksPanel title="Tweaks">
         <TweakSection label="Theme"/>

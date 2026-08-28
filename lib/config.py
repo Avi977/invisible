@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -56,8 +57,20 @@ def load_toml() -> dict:
     if not p.exists():
         print(f"[config] {p} missing — copy invisible.toml.example", file=sys.stderr)
         return {}
-    with open(p, "rb") as f:
-        return tomllib.load(f)
+    raw = p.read_text(encoding="utf-8")
+    try:
+        return tomllib.loads(raw)
+    except tomllib.TOMLDecodeError:
+        # Windows users often write repo_path = "C:\Users\..." in config.
+        # TOML treats backslashes as escapes in basic strings, so repair only
+        # path-like keys and let any remaining syntax errors surface normally.
+        repaired = re.sub(
+            r'^(\s*(?:repo_path|path|root|workspace|directory)\s*=\s*)"([^"\n]*\\[^"\n]*)"',
+            lambda m: m.group(1) + '"' + m.group(2).replace("\\", "\\\\") + '"',
+            raw,
+            flags=re.MULTILINE,
+        )
+        return tomllib.loads(repaired)
 
 
 def project_meta(project_name: str) -> dict:
