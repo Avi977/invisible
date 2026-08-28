@@ -97,6 +97,14 @@ button { background: none; border: none; cursor: pointer; padding: 0; }
       color-mix(in oklab, var(--accent) 9%, transparent) 0%, transparent 55%),
     radial-gradient(800px 600px at 50% 50%,
       rgba(120, 130, 255, 0.05) 0%, transparent 70%),
+    /* Scrim over the photograph. The ridge and the warm glows in the corners
+       stay readable, the middle stays dark enough for body text to sit on. */
+    radial-gradient(120% 100% at 50% 45%,
+      rgba(7, 8, 13, 0.72) 0%, rgba(7, 8, 13, 0.40) 55%, rgba(7, 8, 13, 0.10) 100%),
+    /* Anchored left: the ridge and both warm glows live on that edge, and a
+       centred `cover` crops them out at portrait-ish window ratios. */
+    url("./inv-bg.webp") left center / cover no-repeat fixed,
+    /* Fallback if the image ever fails to load. */
     linear-gradient(180deg, #0a0b10 0%, #07080d 100%);
   transition: background 600ms ease;
 }
